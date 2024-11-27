@@ -34,7 +34,12 @@ Protuberanzprofil = Profil(20, 1, 1.40, 0.400)
 @dataclass
 class Werkstoff:
     class Art(Enum):
-        EH_Stahl = 1
+        Baustahl = 0
+        Verg√ºtungsstahl = 1
+        einsatzgeh√§rteterStahl = 2
+        randschichtgeh√§rteterStahl = 3
+        nitrierterStahl = 4
+        nitrokarburierterStahl = 5
         
     art : Art
     sigma_Hlim : int
@@ -484,15 +489,11 @@ def execute(P, n, b_d_1_verhaeltnis, verzahnungs_qualitaten, m_n, z_1, z_2, x_1,
 
   return ritzel and rad
 
-class Getriebe:
-    """
-    Parameter:
-    - verzahnungsqualit‰ten: Verzahnungsqualit‰ten nach DIN 3961
+def to_float(val) -> float:
+    return val
 
-    Zus‰tzliche Parameter:
-    - b: Breite
-    - b_d_1_verh‰ltnis: b/d_1 Verh‰ltnis
-    """
+class Getriebe:
+    
     def __init__(self,
             m_n : float,
             z: tuple[int, int],
@@ -501,6 +502,13 @@ class Getriebe:
             beta : float,
             k : int,
             **kwargs):
+        """
+        Parameter:
+
+        Zus√§tzliche Parameter:
+        - b: Breite
+        - b_d_1_verh√§ltnis: b/d_1 Verh√§ltnis
+        """
 
         self.m_n = m_n
         self.z = z
@@ -529,11 +537,11 @@ class Getriebe:
         print(f"d = {self.d}")
 
         if "b" in kwargs:
-            self.b : float = kwargs.pop("b")
-        elif "b_d_1_verh‰ltnis" in kwargs:
-            self.b : float = self.d[Ritzel] * kwargs.pop("b_d_1_verh‰ltnis")
+            self.b = to_float(kwargs.pop("b"))
+        elif "b_d_1_verh√§ltnis" in kwargs:
+            self.b = self.d[Ritzel] * to_float(kwargs.pop("b_d_1_verh√§ltnis"))
         else:
-            raise ValueError("b or b_d_1_verh‰ltnis must be specified as argument")
+            raise ValueError("b or b_d_1_verh√§ltnis must be specified as argument")
         print(f"b = {self.b}")
 
         self.m_t = m_n / m.cos(m.radians(self.beta))
@@ -620,136 +628,84 @@ class Getriebe:
         print()
         return
     
-    def Zahnrad(self,
-                idx : int,
-                P : float,
-                n : float,
-                verzahnungsqualit‰ten : int | tuple[int, int],
-                werkstoffe : Werkstoff | tuple[Werkstoff, Werkstoff],
-                K_A : float,
-                K_S : float,
-                **kwargs):
-        """F¸r zus‰tzliche Parameter siehe DIN_3990_11"""
-
-        vq = (verzahnungsqualit‰ten, verzahnungsqualit‰ten) if isinstance(verzahnungsqualit‰ten, int) else verzahnungsqualit‰ten
-        ws = (werkstoffe, werkstoffe) if isinstance(werkstoffe, Werkstoff) else werkstoffe
-        kwargs.update((key, (value[idx] if isinstance(value, tuple) else value)) for key, value in vars(self).items())
-        return DIN_3990_11(self, idx, P = P, n = n, verzahnungsqualit‰ten = vq, werkstoffe = ws, K_A = K_A, K_S = K_S, **kwargs)
-
-    def Zahnr‰der(self,
+    def Zahnr√§der(self,
                 P : float,
                 n_1 : float,
-                verzahnungsqualit‰ten : int | tuple[int, int],
+                verzahnungsqualit√§ten : int | tuple[int, int],
                 werkstoffe : Werkstoff | tuple[Werkstoff, Werkstoff],
-                K_A : float | tuple[float, float],
-                K_S : float | tuple[float, float],
-                **kwargs):
-        """F¸r zus‰tzliche Parameter siehe DIN_3990_11"""
-        
-        K_A = (K_A, K_A) if isinstance(K_A, float) else K_A
-        K_S = (K_S, K_S) if isinstance(K_S, float) else K_S
-        kwargs1 = {key : (value[Ritzel] if isinstance(value, tuple) else value) for key, value in kwargs.items()}
-        kwargs2 = {key : (value[Rad] if isinstance(value, tuple) else value) for key, value in kwargs.items()}
-        return self.Zahnrad(Ritzel, P, n_1, verzahnungsqualit‰ten, werkstoffe, K_A[Ritzel], K_S[Ritzel], **kwargs1), self.Zahnrad(Rad, P, n_1/self.u, vq[Rad], ws[Rad], K_A[Rad], K_S[Rad], **kwargs2)
-
-    pass
-
-
-class DIN_3990_11:
-    def __init__(self,
-                base : Getriebe,
-                idx : int,
-                P : float,
-                n : float,
-                verzahnungsqualit‰ten : tuple[int, int],
-                werkstoffe : tuple[Werkstoff, Werkstoff],
                 K_A : float,
                 K_S : float,
-                A : float = 0.023,
-                bild_3_1 : str = "a",
-                bild_3_2 : str = "a",
-                s : float = 0,
-                l : float = 0,
-                st¸tzwirkung : float = False,
-                doppelschr‰gverzahnt : bool = False,
-                f_ma : float = 0,
+                A: float,
+                doppelschr√§gverzahnt: bool = False,
+                s: float | tuple[float, float] = 0.,
                 **kwargs):
         """
         Parameter:
         - P: Leistung [kW]
-        - n: Drehzahl [1/min]
-        - verzahnungsqualit‰ten: siehe Tabelle 3.1
-        - werkstoffe
+        - n_1: Antriebsdrehzahl [1/min]
+        - verzahnungsqualit√§t: siehe Tabelle 3.1
+        - werkstoff
         - K_A: siehe Tabelle A.1
-        - K_S: ersetz K_A f¸r die statische Berechnung
+        - K_S: ersetz K_A f√ºr die statische Berechnung
         - A: siehe Tabelle 3.2
-        - bild_3_1: a-f, siehe Bild 3.1
-        - bild_3_2: a-e, siehe Bild 3.2
+        - doppelschr√§gverzahnt: bool
         - s: siehe Bild 3.2
-        - l: siehe Bild 3.2
-        - st¸tzwirkung: siehe Bild 3.2
-        - d_sh1: Wellendurchmesser
-        - doppelschr‰gverzahnt
-        - f_ma:  Flankenlinien-Herstellabweichung, siehe Abschnitt 3.4.2.4
+
+        Zus√§tzliche Parameter (ggf. auch tuple[]):
+        - bild_3_1: "a"-"f", siehe Bild 3.1
+        - bild_3_2: "a"-"e", siehe Bild 3.2
+        - l: float, siehe Bild 3.2
+        - st√ºtzwirkung: bool, siehe Bild 3.2
+        - d_sh1: float, Wellendurchmesser
+        - f_ma: float, Flankenlinien-Herstellabweichung, siehe Abschnitt 3.4.2.4
+        - f_Hbeta: float, zul√§ssige Flankenlinien-Winkelabweichung, siehe Fu√ünote 6
         """
+        assert all(verzahnungsqualit√§t in range(6, 13) for verzahnungsqualit√§t in verzahnungsqualit√§ten)
+        def to_tuple(val):
+            return val if isinstance(val, tuple) else (val, val)
 
-        self.__dict__.update((key, value) for key, value in locals().items() if key not in ("base", "idx", "kwargs"))
-        # self.P = P
-        # self.n = n
-        # self.verzahnungsqualit‰t = verzahnungsqualit‰t
-        # self.werkstoff = werkstoff
-        # self.K_A = K_A
-        # self.K_S = K_S
-
-        assert(all(q in range(6, 13) for q in self.verzahnungsqualit‰t))
-
-        print("DIN 3990-11 " + ("Ritzel" if idx == Ritzel else "Rad"))
-        print()
-
+        self.P = P
+        self.n = (n_1, n_1 / self.u)
+        self.verzahnungsqualit√§ten = to_tuple(verzahnungsqualit√§ten)
+        self.werkstoffe = to_tuple(werkstoffe)
+        self.K_A = K_A
+        self.K_S = K_S
+        self.A = A
+        self.doppelschr√§gverzahnt = doppelschr√§gverzahnt
+        self.s = to_tuple(s)
+        self.__dict__.update(kwargs)
+        #self.__dict__.update((key, (value[Ritzel] if isinstance(value, tuple) else value)) for key, value in vars(self).items())
+        
         print("Parameter")
         [print(f"{key} = {value}") for key, value in vars(self).items()]
+        print()
 
-        self.__dict__.update(kwargs)
-        self.base = base
-        #self.idx = idx
-
-        if self.doppelschr‰gverzahnt:
-            self.d_B = self.b / 2
+        if self.doppelschr√§gverzahnt:
+            self.b_B = self.b / 2
             print(f"d_B = {self.d_B}")
 
-        self.v = self.n / 60 * 2 * m.pi * self.d / 2000
+        self.v = self.n[Ritzel] / 60 * 2 * m.pi * self.d[Ritzel] / 2000
         print(f"v = {self.v}")
 
         self.F_t = 1000 * self.P / self.v
         print(f"F_t = {self.F_t}")
   
-        self.T = self.F_t * self.d / 2000
+        def T(idx):
+            return self.F_t * self.d[idx] / 2000
+        self.T = T(Ritzel), T(Rad)
         print(f"T = {self.T}")
 
-        assert(self.F_t / self.b * self.K_A >= 100)  # Abschnitt 3.4.1
-        self.F_m = self.F_t * self.K_A * self.K_V
-        print(f"F_m = {self.F_m}")
+        print()
 
-
-        return
-
-    def __getattr__(self, name):
-        funcname = "_" + name
-        assert hasattr(self, funcname)
-        value = getattr(self, funcname)()
-        setattr(self, name, value)
-        print(f"{name} = {value}")
-        return value
-
-    def _K_V(self):
-        temp1 = self.base.z[Ritzel] * self.v / 100 * m.sqrt(self.u**2 / (1 + self.u**2))
-        assert(temp1 < 10)  # Glg 3.04
+        # Glg 3.04
+        temp1 = self.z[Ritzel] * self.v / 100 * m.sqrt(self.u**2 / (1 + self.u**2))
+        assert temp1 < 10  
 
         temp2 = max(self.K_A * self.F_t / self.b, 100)
 
-        def K_V(geradverzahnt):
+        def K_V(idx, geradverzahnt):
             if geradverzahnt:
-                match self.verzahnungsqualit‰t:
+                match self.verzahnungsqualit√§ten[idx]:
                     case 6:
                         K_1 = 9.6
                     case 7:
@@ -766,7 +722,7 @@ class DIN_3990_11:
                         K_1 = 122.5
                 K_2 = 0.0193
             else:
-                match self.verzahnungsqualit‰t:
+                match self.verzahnungsqualit√§ten[idx]:
                     case 6:
                         K_1 = 8.5
                     case 7:
@@ -783,63 +739,143 @@ class DIN_3990_11:
                         K_1 = 109.1
                 K_2 = 0.0087
             return 1 + (K_1 / temp2 + K_2) * temp1
-
         if self.beta == 0:
-            return K_V(True)
+            self.K_V = K_V(Ritzel, True), K_V(Rad, True)
         elif self.epsilon_beta >= 1:
-            return K_V(False)
+            self.K_V = K_V(Ritzel, False), K_V(Rad, False)
         else:
-            K_Valpha = K_V(True)
-            K_Vbeta = K_V(False)
-            return K_Valpha - self.epsilon_beta * (K_Valpha - K_Vbeta)
-    
-    def _F_betay(self):
-        """Glg 0.08"""
-        return self.F_betax - self.gamma_beta
-    def _F_betax(self):
-        """Glg 0.09"""
-        match self.bild_3_1:
-            case "a", "f":
-                multi = -1
-            case "b", "e":
-                multi = 1
-            case "c":
-                B_s = 1.5 if self.doppelschr‰gverzahnt else 1
-                multi = 1 if abs(self.K_s) * self.l * self.s / self.base.d[Ritzel]**2 * (self.base.d[Ritzel] / self.d_sh1)**4 <= B_s else -1
-            case "d":
-                B_s = 1.5 if self.doppelschr‰gverzahnt else 1
-                multi = 1 if abs(self.K_s) * self.l * self.s / self.base.d[Ritzel]**2 * (self.base.d[Ritzel] / self.d_sh1)**4 >= B_s - 0.3 else -1
-            case _:
-                raise ValueError
+            K_Valpha = K_V(Ritzel, True), K_V(Rad, True)
+            K_Vbeta = K_V(Ritzel, False), K_V(Rad, False)
+            print(f"K_Valpha = {K_Valpha}")
+            print(f"K_Vbeta = {K_Vbeta}")
+            def interp(idx):
+                return K_Valpha[idx] - self.epsilon_beta * (K_Valpha[idx] - K_Vbeta[idx])
+            self.K_V = interp(Ritzel), interp(Rad)
+        print(f"K_V = {self.K_V}")
 
-        F_betax = abs(1.33 * self.f_sh + multi * self.f_ma)
-        assert F_betax >= self.F_betaxmin
-        return F_betax
-    def _F_betaxmin(self):
-        return max(0.005 * self.F_m / self.b, 0.5 * self.f_Hbeta)
-    def _f_sh(self):
-        if self.s == 0:
-            temp = 1
-        else:
-            temp = self.K_s - self.l * self.s / self.base.d[Ritzel]**2 * (self.base.d[Ritzel] / self.d_sh)**4
+        # Abschnitt 3.4.1
+        assert(self.F_t / self.b * self.K_A >= 100)
 
-        if not self.doppelschr‰gverzahnt:   # Glg 3.14
-            return self.F_m / self.b * self.A * (abs(1 + temp - 0.3) + 0.3) * (self.b / self.base.d[Ritzel])**2
-        else:   # Glg 3.15
-            return self.F_m / self.b * 2 * self.A * (abs(1.5 + temp - 0.3) + 0.3) * (self.b_B / self.base.d[Ritzel])**2
-    def _y_beta(self):
-        def y_beta(idx):
-            if self.werkstoffe[idx].art == Werkstoff.Art.EH_Stahl:
-                return 
-        y_beta1 = y_beta(Ritzel)
-        y_beta2 = y_beta(Rad)
-        return (y_beta1 + y_beta2) / 2
+        def F_m(idx):
+            return self.F_t * self.K_A * self.K_V[idx]
+        self.F_m = F_m(Ritzel), F_m(Rad)
+        print(f"F_m = {self.F_m}")
+
+        def K_s(idx):
+            st√ºtz = self.st√ºtzwirkung[idx]
+            match self.bild_3_2:
+                case "a":
+                    return 0.48 if st√ºtz else 0.8
+                case "b":
+                    return -0.48 if st√ºtz else -0.8
+                case "c":
+                    return 1.33
+                case "d":
+                    return -0.36 if st√ºtz else -0.6
+                case "e":
+                    return -0.6 if st√ºtz else -1.0
+            raise ValueError
+
+        # Glg 3.14, 3.15
+        def f_sh(idx) -> float:
+            def temp(idx) -> float:
+                return 0. if self.s[idx] == 0 else K_s(idx) * self.l * self.s / self.d[Ritzel]**2 * (self.d[Ritzel] / self.d_sh[idx])**4
+            if not self.doppelschr√§gverzahnt:
+                return self.F_m[idx] / self.b * self.A * (abs(1 + temp(idx) - 0.3) + 0.3) * (self.b / self.d[Ritzel])**2
+            else:
+                return self.F_m[idx] / self.b * 2 * self.A * (abs(1.5 + temp(idx) - 0.3) + 0.3) * (self.b_B / self.d[Ritzel])**2
+        self.f_sh = f_sh(Ritzel), f_sh(Rad)
+
+        # Glg 3.09
+        def F_betax(idx) -> float:
+            def multi():
+                match self.bild_3_1:
+                    case "a", "f":
+                        return -1
+                    case "b", "e":
+                        return 1
+                    case "c":
+                        B_s = 1.5 if self.doppelschr√§gverzahnt else 1
+                        return 1 if abs(self.K_s) * self.l * self.s / self.d[Ritzel]**2 * (self.d[Ritzel] / self.d_sh[Ritzel])**4 <= B_s else -1
+                    case "d":
+                        B_s = 1.5 if self.doppelschr√§gverzahnt else 1
+                        return 1 if abs(self.K_s) * self.l * self.s / self.d[Ritzel]**2 * (self.d[Ritzel] / self.d_sh[Ritzel])**4 >= B_s - 0.3 else -1
+                    case _:
+                        raise ValueError
+            if self.f_ma == 0:
+                value = abs(1.33 * self.f_sh[idx])
+            else:
+                value = abs(1.33 * self.f_sh[idx] + multi() * self.f_ma)
+            # Glg 3.10
+            min_value = max(0.005 * self.F_m[idx] / self.b, 0.5 * self.f_Hbeta)
+            assert value >= min_value
+            return value
+        self.F_betax = F_betax(Ritzel), F_betax(Rad)
+        print(f"F_betax = {self.F_betax}")
+        
+        def y_beta(idx : int):
+            werkstoff = self.werkstoffe[idx]
+            match werkstoff.art:
+                case Werkstoff.Art.Baustahl | Werkstoff.Art.Verg√ºtungsstahl:
+                    y_beta = 320 / werkstoff.sigma_Hlim * self.F_betax[idx]
+                    if self.v <= 5:
+                        pass
+                    elif self.v <= 10:
+                        assert y_beta <= 25600 / werkstoff.sigma_Hlim
+                    else:
+                        assert y_beta <= 12800 / werkstoff.sigma_Hlim
+                    return y_beta
+                case Werkstoff.Art.einsatzgeh√§rteterStahl | Werkstoff.Art.randschichtgeh√§rteterStahl | Werkstoff.Art.nitrierterStahl | Werkstoff.Art.nitrokarburierterStahl:
+                    y_beta = 0.15 * self.F_betax[idx]
+                    assert y_beta <= 6
+                    return y_beta
+            raise NotImplementedError
+        self.y_beta = (y_beta(Ritzel) + y_beta(Rad)) / 2
+        print(f"y_beta = {self.y_beta}")
+
+        # Glg 3.08
+        def F_betay(idx):
+            return self.F_betax[idx] - self.y_beta
+        self.F_betay = F_betay(Ritzel), F_betay(Rad)
+        print(f"F_betay = {self.F_betay}")
+
+        c_gamma = 20
+
+        # Glg 3.20, 3.21
+        def K_Hbeta(idx):
+            val = 1 + c_gamma * self.F_betay[idx] / (2 * self.F_m[idx] / self.b)
+            if val <= 2:
+                return val
+            return m.sqrt(2 * c_gamma * self.F_betay[idx] / (self.F_m[idx] / self.b))
+        self.K_Hbeta = K_Hbeta(Ritzel), K_Hbeta(Rad)
+        print(f"K_Hbeta = {self.K_Hbeta}")
+
+        # Glg 3.22
+        def K_Halpha(idx):
+            h_b = min(self.h / self.b, 1. / 3.)
+            return m.pow(self.K_Hbeta[idx], (1 / (1 + h_b + h_b**2)))
+        self.K_Halpha = K_Halpha(Ritzel), K_Halpha(Rad)
+        
+        raise NotImplementedError
+        def K_H(idx : int):
+            linienbel = self.F_t / self.b * self.K_A
+            art = self.werkstoffe[idx].art
+            if linienbel > 100:
+                match art:
+                    case 6:
+                        return 1.25
+            else:
+                pass
+
+        return
+
+
 
     pass
 
 """
 
-berechnung von Ritzel und Rad kann nicht getrennt durchgef¸hrt werden
+berechnung von Ritzel und Rad kann nicht getrennt durchgef√ºhrt werden
 
 """
 
@@ -849,18 +885,21 @@ getriebe = Getriebe(m_n = 4,
                     bezugsprofil = Normalprofil1,
                     beta = 0,
                     k = 0,
-                    b_d_1_verh‰ltnis = 0.64)
+                    b_d_1_verh√§ltnis = 0.64)
 
-werkstoff = Werkstoff(Werkstoff.Art.EH_Stahl, 1500, 860)
-ritzel, rad = getriebe.Zahnr‰der(P = 55,
-            n = 980,
-            verzahnungsqualit‰ten = (6, 7),
-            werkstoffe = (werkstoff, werkstoff),
+werkstoff = Werkstoff(Werkstoff.Art.einsatzgeh√§rteterStahl, 1500, 860)
+getriebe.Zahnr√§der(P = 55,
+            n_1 = 980,
+            verzahnungsqualit√§ten = (6, 7),
+            werkstoffe = werkstoff,
             K_A = 1.75,
-            K_S = 2.5)
+            K_S = 2.5,
+            A = 0.023,
+
+            f_ma = 0,
+            f_Hbeta = 0)
 
 
-DIN_3990_11()
 
 assert(self.b / self.m_n <= 30) # Konstruktionsvorgaben, Tabelle 4
 
