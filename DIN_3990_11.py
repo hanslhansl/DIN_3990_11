@@ -3,11 +3,25 @@ from enum import Enum
 import math as m, sys, multiprocessing, copy
 from scipy import optimize
 
-
-S_Fstat_min = 3.5
-S_Fdyn_interval = (1.5, 2)
 S_Hstat_min = 1.3
 S_Hdyn_interval = (1.2, 1.5)
+S_Fstat_min = 3.5
+S_Fdyn_interval = (1.5, 2)
+
+
+class HiddenPrints:
+    def __init__(self, switch : bool):
+        self.switch = switch
+
+    def __enter__(self):
+        if self.switch:
+            self._original_stdout = sys.stdout
+            sys.stdout = open(os.devnull, 'w')
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.switch:
+            sys.stdout.close()
+            sys.stdout = self._original_stdout
 
 def involute(alpha):
     return m.tan(m.radians(alpha)) - m.radians(alpha)
@@ -19,7 +33,6 @@ def inverse_involute(alpha, anfangswert = 20):
    
 Ritzel = 0
 Rad = 1
-indices = Ritzel, Rad
 
 @dataclass
 class Profil:
@@ -27,7 +40,7 @@ class Profil:
     h_aP_s : float
     h_fP_s : float
     rho_fP_s : float
-Normalprofil1 =     Profil(20, 1, 1.25, 0.375)
+Normalprofil1 =     Profil(20, 1, 1.25, 0.25)
 Normalprofil2 =     Profil(20, 1, 1.25, 0.375)
 Protuberanzprofil = Profil(20, 1, 1.40, 0.400)
 
@@ -35,15 +48,17 @@ Protuberanzprofil = Profil(20, 1, 1.40, 0.400)
 class Werkstoff:
     class Art(Enum):
         Baustahl = 0
-        Vergütungsstahl = 1
+        vergüteterStahl = 1
         einsatzgehärteterStahl = 2
         randschichtgehärteterStahl = 3
         nitrierterStahl = 4
         nitrokarburierterStahl = 5
         
     art : Art
-    sigma_Hlim : int
-    sigma_FE : int
+    sigma_Hlim : float
+    sigma_FE : float
+    HB : float
+    """Nur das Intervall (130; 470) ist relevant"""
 
 
 def execute(P, n, b_d_1_verhaeltnis, verzahnungs_qualitaten, m_n, z_1, z_2, x_1, x_2, alpha_n, beta, k, sigma_Hlim, sigma_FE, K_A, K_S):
@@ -357,7 +372,7 @@ def execute(P, n, b_d_1_verhaeltnis, verzahnungs_qualitaten, m_n, z_1, z_2, x_1,
     G = rho_fP / m_n - h_fP / m_n + x # D.5.02
     print(f"G = {G}")
 
-    z_n = (z_1 if ist_ritzel else z_2) / 0.9869 / m.cos(m.radians(beta))
+    z_n = (z_1 if ist_ritzel else z_2) / m.cos(m.radians(beta))**3
     print(f"z_n = {z_n}")
 
     d = d_1 if ist_ritzel else d_2
@@ -550,6 +565,9 @@ class Getriebe:
         self.alpha_t = m.degrees(m.atan(m.tan(m.radians(self.alpha_n)) / m.cos(m.radians(self.beta))))
         print(f"alpha_t = {self.alpha_t}")
 
+        self.beta_b = m.degrees(m.atan(m.tan(m.radians(self.beta)) * m.cos(m.radians(self.alpha_t))))
+        print(f"beta_b = {self.beta_b}")
+
         def d_b(idx):
             return self.d[idx] * m.cos(m.radians(self.alpha_t))
         self.d_b = d_b(Ritzel), d_b(Rad)
@@ -631,13 +649,17 @@ class Getriebe:
     def Zahnräder(self,
                 P : float,
                 n_1 : float,
-                verzahnungsqualitäten : int | tuple[int, int],
-                werkstoffe : Werkstoff | tuple[Werkstoff, Werkstoff],
+                verzahnungsqualität : int | tuple[int, int],
+                werkstoff : Werkstoff | tuple[Werkstoff, Werkstoff],
                 K_A : float,
                 K_S : float,
                 A: float,
                 doppelschrägverzahnt: bool = False,
+                innenverzahnt: bool = False,
                 s: float | tuple[float, float] = 0.,
+                s_pr: float = 0.,
+                R_z : float = 16,
+                output = True,
                 **kwargs):
         """
         Parameter:
@@ -648,8 +670,11 @@ class Getriebe:
         - K_A: siehe Tabelle A.1
         - K_S: ersetz K_A für die statische Berechnung
         - A: siehe Tabelle 3.2
-        - doppelschrägverzahnt: bool
+        - doppelschrägverzahnt
+        - innenverzahnt
         - s: siehe Bild 3.2
+        - s_pr: Fussfreischnitt
+        - R_z: gemittelte Rauhtiefe
 
         Zusätzliche Parameter (ggf. auch tuple[]):
         - bild_3_1: "a"-"f", siehe Bild 3.1
@@ -659,26 +684,36 @@ class Getriebe:
         - d_sh1: float, Wellendurchmesser
         - f_ma: float, Flankenlinien-Herstellabweichung, siehe Abschnitt 3.4.2.4
         - f_Hbeta: float, zulässige Flankenlinien-Winkelabweichung, siehe Fußnote 6
+        - Z_LVRstat, Z_LVRdyn: float, siehe Abschnitt 4.8
         """
-        assert all(verzahnungsqualität in range(6, 13) for verzahnungsqualität in verzahnungsqualitäten)
-        def to_tuple(val):
-            return val if isinstance(val, tuple) else (val, val)
+        with HiddenPrints(not output):
+            print("Parameter")
+            [print(f"{key} = {value}") for key, value in locals().items() if key not in ("self", "kwargs", "output")]
+            print()
 
-        self.P = P
-        self.n = (n_1, n_1 / self.u)
-        self.verzahnungsqualitäten = to_tuple(verzahnungsqualitäten)
-        self.werkstoffe = to_tuple(werkstoffe)
-        self.K_A = K_A
-        self.K_S = K_S
-        self.A = A
-        self.doppelschrägverzahnt = doppelschrägverzahnt
-        self.s = to_tuple(s)
-        self.__dict__.update(kwargs)
-        #self.__dict__.update((key, (value[Ritzel] if isinstance(value, tuple) else value)) for key, value in vars(self).items())
-        
-        print("Parameter")
-        [print(f"{key} = {value}") for key, value in vars(self).items()]
-        print()
+            def to_tuple(val):
+                return val if isinstance(val, tuple) else (val, val)
+
+            self.P = P
+            self.n = (n_1, n_1 / self.u)
+            self.verzahnungsqualität = to_tuple(verzahnungsqualität)
+            self.werkstoff = to_tuple(werkstoff)
+            self.K_A = K_A
+            self.K_S = K_S
+            self.A = A
+            self.doppelschrägverzahnt = doppelschrägverzahnt
+            self.innenverzahnt = innenverzahnt
+            self.s = to_tuple(s)
+            self.s_pr = s_pr
+            self.R_z = R_z
+            self.__dict__.update(kwargs)
+            #self.__dict__.update((key, (value[Ritzel] if isinstance(value, tuple) else value)) for key, value in vars(self).items())
+
+            self._Zahnräder()
+        return
+
+    def _Zahnräder(self):
+        assert all(vq in range(6, 13) for vq in self.verzahnungsqualität)
 
         if self.doppelschrägverzahnt:
             self.b_B = self.b / 2
@@ -703,9 +738,9 @@ class Getriebe:
 
         temp2 = max(self.K_A * self.F_t / self.b, 100)
 
-        def K_V(idx, geradverzahnt):
+        def K_V(idx, geradverzahnt) -> float:
             if geradverzahnt:
-                match self.verzahnungsqualitäten[idx]:
+                match self.verzahnungsqualität[idx]:
                     case 6:
                         K_1 = 9.6
                     case 7:
@@ -722,7 +757,7 @@ class Getriebe:
                         K_1 = 122.5
                 K_2 = 0.0193
             else:
-                match self.verzahnungsqualitäten[idx]:
+                match self.verzahnungsqualität[idx]:
                     case 6:
                         K_1 = 8.5
                     case 7:
@@ -748,7 +783,7 @@ class Getriebe:
             K_Vbeta = K_V(Ritzel, False), K_V(Rad, False)
             print(f"K_Valpha = {K_Valpha}")
             print(f"K_Vbeta = {K_Vbeta}")
-            def interp(idx):
+            def interp(idx) -> float:
                 return K_Valpha[idx] - self.epsilon_beta * (K_Valpha[idx] - K_Vbeta[idx])
             self.K_V = interp(Ritzel), interp(Rad)
         print(f"K_V = {self.K_V}")
@@ -756,7 +791,7 @@ class Getriebe:
         # Abschnitt 3.4.1
         assert(self.F_t / self.b * self.K_A >= 100)
 
-        def F_m(idx):
+        def F_m(idx) -> float:
             return self.F_t * self.K_A * self.K_V[idx]
         self.F_m = F_m(Ritzel), F_m(Rad)
         print(f"F_m = {self.F_m}")
@@ -814,9 +849,9 @@ class Getriebe:
         print(f"F_betax = {self.F_betax}")
         
         def y_beta(idx : int):
-            werkstoff = self.werkstoffe[idx]
+            werkstoff = self.werkstoff[idx]
             match werkstoff.art:
-                case Werkstoff.Art.Baustahl | Werkstoff.Art.Vergütungsstahl:
+                case Werkstoff.Art.Baustahl | Werkstoff.Art.vergüteterStahl:
                     y_beta = 320 / werkstoff.sigma_Hlim * self.F_betax[idx]
                     if self.v <= 5:
                         pass
@@ -825,7 +860,7 @@ class Getriebe:
                     else:
                         assert y_beta <= 12800 / werkstoff.sigma_Hlim
                     return y_beta
-                case Werkstoff.Art.einsatzgehärteterStahl | Werkstoff.Art.randschichtgehärteterStahl | Werkstoff.Art.nitrierterStahl | Werkstoff.Art.nitrokarburierterStahl:
+                case Werkstoff.Art.einsatzgehärteterStahl | Werkstoff.Art.nitrierterStahl | Werkstoff.Art.nitrokarburierterStahl:
                     y_beta = 0.15 * self.F_betax[idx]
                     assert y_beta <= 6
                     return y_beta
@@ -839,73 +874,563 @@ class Getriebe:
         self.F_betay = F_betay(Ritzel), F_betay(Rad)
         print(f"F_betay = {self.F_betay}")
 
-        c_gamma = 20
+        self.c_gamma = 20
 
         # Glg 3.20, 3.21
         def K_Hbeta(idx):
-            val = 1 + c_gamma * self.F_betay[idx] / (2 * self.F_m[idx] / self.b)
+            val = 1 + self.c_gamma * self.F_betay[idx] / (2 * self.F_m[idx] / self.b)
             if val <= 2:
                 return val
-            return m.sqrt(2 * c_gamma * self.F_betay[idx] / (self.F_m[idx] / self.b))
+            return m.sqrt(2 * self.c_gamma * self.F_betay[idx] / (self.F_m[idx] / self.b))
         self.K_Hbeta = K_Hbeta(Ritzel), K_Hbeta(Rad)
         print(f"K_Hbeta = {self.K_Hbeta}")
 
         # Glg 3.22
-        def K_Halpha(idx):
+        def K_Fbeta(idx):
             h_b = min(self.h / self.b, 1. / 3.)
             return m.pow(self.K_Hbeta[idx], (1 / (1 + h_b + h_b**2)))
-        self.K_Halpha = K_Halpha(Ritzel), K_Halpha(Rad)
+        self.K_Fbeta = K_Fbeta(Ritzel), K_Fbeta(Rad)
         
-        raise NotImplementedError
-        def K_H(idx : int):
-            linienbel = self.F_t / self.b * self.K_A
-            art = self.werkstoffe[idx].art
-            if linienbel > 100:
-                match art:
-                    case 6:
-                        return 1.25
-            else:
-                pass
+        # Tabelle 3.3
+        def K_Halpha_und_Falpha(idx : int):
+            linienbelastung = self.F_t / self.b * self.K_A
+            art = self.werkstoff[idx].art
+            qualität = self.verzahnungsqualität[idx]
+            Art = Werkstoff.Art
 
+            if art in (Art.einsatzgehärteterStahl, Art.nitrierterStahl, Art.nitrokarburierterStahl):
+                if self.beta == 0:
+                    if linienbelastung > 100:
+                        match qualität:
+                            case 6 | 7:
+                                return 1., 1.
+                            case 8:
+                                return 1.1, 1.1
+                            case 9:
+                                return 1.2, 1.2
+                            case 10 | 11 | 12:
+                                K_H = 1 / self.Z_epsilon**2
+                                K_F = 1 / self.Y_epsilon**2
+                                assert K_H >= 1.2
+                                assert K_F >= 1.2
+                                return K_H, K_F
+                    else:
+                        if qualität <= 6:
+                            K_H = 1 / self.Z_epsilon**2
+                            K_F = 1 / self.Y_epsilon**2
+                            assert K_H >= 1.2
+                            assert K_F >= 1.2
+                            return K_H, K_F
+                else:
+                    if linienbelastung > 100:
+                        match qualität:
+                            case 6:
+                                return 1., 1.
+                            case 7:
+                                return 1.1, 1.1
+                            case 8:
+                                return 1.2, 1.2
+                            case 9:
+                                return 1.4, 1.4
+                            case 10 | 11 | 12:
+                                K = self.epsilon_alpha / m.cos(m.radians(self.beta_b))**2
+                                assert K >= 1.4
+                                return K, K
+                    else:
+                        if qualität <= 6:
+                            K = self.epsilon_alpha / m.cos(m.radians(self.beta_b))**2
+                            assert K >= 1.4
+                            return K, K
+            else:
+                if self.beta == 0:
+                    if linienbelastung > 100:
+                        match qualität:
+                            case 6 | 7 | 8:
+                                return 1., 1.
+                            case 9:
+                                return 1.1, 1.1
+                            case 10:
+                                return 1.2, 1.2
+                            case 11 | 12:
+                                K_H = 1 / self.Z_epsilon**2
+                                K_F = 1 / self.Y_epsilon**2
+                                assert K_H >= 1.2
+                                assert K_F >= 1.2
+                                return K_H, K_F
+                    else:
+                        if qualität <= 6:
+                            K_H = 1 / self.Z_epsilon**2
+                            K_F = 1 / self.Y_epsilon**2
+                            assert K_H >= 1.2
+                            assert K_F >= 1.2
+                            return K_H, K_F
+                else:
+                    if linienbelastung > 100:
+                        match qualität:
+                            case 6 | 7:
+                                return 1., 1.
+                            case 8:
+                                return 1.1, 1.1
+                            case 9:
+                                return 1.2, 1.2
+                            case 10:
+                                return 1.4, 1.4
+                            case 11 | 12:
+                                K = self.epsilon_alpha / m.cos(m.radians(self.beta_b))**2
+                                assert K >= 1.4
+                                return K, K
+                    else:
+                        if qualität <= 6:
+                            K = self.epsilon_alpha / m.cos(m.radians(self.beta_b))**2
+                            assert K >= 1.4
+                            return K, K
+
+            raise ValueError
+        K_ritzel = K_Halpha_und_Falpha(Ritzel)
+        K_rad = K_Halpha_und_Falpha(Rad)
+        self.K_Halpha = K_ritzel[0], K_rad[0]
+        self.K_Falpha = K_ritzel[1], K_rad[1]
+        print(f"K_Halpha = {self.K_Halpha}")
+        print(f"K_Falpha = {self.K_Falpha}")
+
+        # Grübchentragfähigkeit
+        
+        # Glg 4.12
+        self.M_1 = m.tan(m.radians(self.alpha_wt)) / m.sqrt(
+            (m.sqrt(self.d_a[Ritzel]**2 / self.d_b[Ritzel]**2 - 1) - 2 * m.pi / self.z[Ritzel]) *
+            (m.sqrt(self.d_a[Rad]**2 / self.d_b[Rad]**2 - 1) - (self.epsilon_alpha - 1) * 2 * m.pi / self.z[Rad]))
+        print(f"M_1 = {self.M_1}")
+
+        # Glg 4.13
+        self.M_2 = m.tan(m.radians(self.alpha_wt)) / m.sqrt(
+            (m.sqrt(self.d_a[Rad]**2 / self.d_b[Rad]**2 - 1) - 2 * m.pi / self.z[Rad]) *
+            (m.sqrt(self.d_a[Ritzel]**2 / self.d_b[Ritzel]**2 - 1) - (self.epsilon_alpha - 1) * 2 * m.pi / self.z[Ritzel]))
+        print(f"M_2 = {self.M_2}")
+
+        # Abschnitt 4.2
+        if self.beta == 0:
+            self.Z_B = max(1., self.M_1)
+            self.Z_D = max(1., self.M_2)
+        elif self.epsilon_beta >= 1:
+            self.Z_B = 1.
+            self.Z_D = 1.
+        else:
+            self.Z_B = max(1., self.M_1 - self.epsilon_beta * (self.M_1 - 1))
+            self.Z_D = max(1., self.M_2 - self.epsilon_beta * (self.M_2 - 1))
+        if self.innenverzahnt:
+            self.Z_D = 1.
+        print(f"Z_B = {self.Z_B}")
+        print(f"Z_D = {self.Z_D}")
+
+        # Glg. 4.14
+        self.Z_H = m.sqrt(2 * m.cos(m.radians(self.beta_b)) * m.cos(m.radians(self.alpha_wt)) / m.cos(m.radians(self.alpha_t))**2 / m.sin(m.radians(self.alpha_wt)))
+        print(f"Z_H = {self.Z_H}")
+
+        # Tabelle 4.1
+        ws1, ws2 = self.werkstoff
+        Art = Werkstoff.Art
+        stahl = (Art.Baustahl, Art.vergüteterStahl, Art.einsatzgehärteterStahl, Art.randschichtgehärteterStahl, Art.nitrierterStahl, Art.nitrokarburierterStahl)
+        if ws1.art in stahl and ws2.art in stahl:
+            self.Z_E = 189.8
+        else:
+            raise NotImplementedError
+        print(f"Z_E = {self.Z_E}")
+
+        # Abschnitt 4.5
+        if self.beta == 0:
+            self.Z_epsilon = m.sqrt((4. - self.epsilon_alpha) / 3.)
+        elif self.epsilon_beta >= 1.:
+            self.Z_epsilon = m.sqrt(1 / self.epsilon_alpha)
+        else:
+            self.Z_epsilon = m.sqrt((4. - self.epsilon_alpha) / 3. * (1. - self.epsilon_beta) + self.epsilon_beta / self.epsilon_alpha)
+        print(f"Z_epsilon = {self.Z_epsilon}")
+
+        # Glg 4.18
+        self.Z_beta = m.sqrt(m.cos(m.radians(self.epsilon_beta)))
+
+        # Glg 4.19
+        if not hasattr(self, "Z_LVRstat"):
+            self.Z_LVRstat = 1.
+        if not hasattr(self, "Z_LVRdyn"):
+            self.Z_LVRdyn = 1.
+        print(f"Z_LVRstat = {self.Z_LVRstat}")
+        print(f"Z_LVRdyn = {self.Z_LVRdyn}")
+
+        # Glg 4.23
+        HB = min(self.werkstoff[Ritzel].HB, self.werkstoff[Rad].HB)
+        if HB < 130:
+            self.Z_W = 1.2
+        elif HB > 470:
+            self.Z_W = 1.
+        else:
+            self.Z_W = 1.2 - (HB - 130) / 1700
+        print(f"Z_W = {self.Z_W}")
+
+        # Tabelle 4.2
+        def Z_Xdyn(idx : int):
+            wsart = self.werkstoff[idx].art
+            Art = Werkstoff.Art
+            if wsart in (Art.Baustahl, Art.vergüteterStahl):
+                return 1.
+            elif wsart in (Art.einsatzgehärteterStahl, ):
+                if self.m_n <= 10:
+                    return 1.
+                elif self.m_n < 30:
+                    return 1.05 - 0.005  * self.m_n
+                else:
+                    return 0.9
+            elif wsart in (Art.nitrierterStahl, Art.nitrokarburierterStahl):
+                if self.m_n <= 7.5:
+                    return 1.
+                elif self.m_n < 30:
+                    return 1.08 - 0.011  * self.m_n
+                else:
+                    return 0.75
+            raise NotImplementedError
+        self.Z_Xstat = 1., 1.
+        self.Z_Xdyn = Z_Xdyn(Ritzel), Z_Xdyn(Rad)
+        print(f"Z_Xstat = {self.Z_Xstat}")
+        print(f"Z_Xdyn = {self.Z_Xdyn}")
+
+        # Tabelle 4.3
+        def Z_NT(idx : int):
+            wsart = self.werkstoff[idx].art
+            Art = Werkstoff.Art
+            if wsart in (Art.Baustahl, ):
+                return 1.6, 1.0
+            elif wsart in (Art.vergüteterStahl, Art.einsatzgehärteterStahl):
+                return 1.6, 1.0
+            elif wsart in (Art.nitrierterStahl, ):
+                return 1.3, 1.0
+            elif wsart in (Art.nitrokarburierterStahl, ):
+                return 1.1, 1.0
+            raise NotImplementedError
+        Z_NTritzel = Z_NT(Ritzel)
+        Z_NTrad = Z_NT(Rad)
+        self.Z_NTstat = Z_NTritzel[0], Z_NTrad[0]
+        self.Z_NTdyn = Z_NTritzel[1], Z_NTrad[1]
+
+        # Glg 4.03
+        def sigma_HGstat(idx):
+            return self.werkstoff[idx].sigma_Hlim * self.Z_NTstat[idx] * self.Z_LVRstat * self.Z_W * self.Z_Xstat[idx]
+        def sigma_HGdyn(idx):
+            return self.werkstoff[idx].sigma_Hlim * self.Z_NTdyn[idx] * self.Z_LVRdyn * self.Z_W * self.Z_Xdyn[idx]
+        self.sigma_HGstat = sigma_HGstat(Ritzel), sigma_HGstat(Rad)
+        self.sigma_HGdyn = sigma_HGdyn(Ritzel), sigma_HGdyn(Rad)
+        print(f"sigma_HGstat = {self.sigma_HGstat}")
+        print(f"sigma_HGdyn = {self.sigma_HGdyn}")
+
+        # Glg 4.02
+        self.sigma_H0 = self.Z_H * self.Z_E * self.Z_epsilon * self.Z_beta * m.sqrt(self.F_t / self.d[Ritzel] / self.b * (self.u + 1) / self.u)
+        print(f"sigma_H0 = {self.sigma_H0}")
+
+        # Glg 4.01
+        def sigma_Hstat(idx):
+            return (self.Z_B if idx == Ritzel else self.Z_D) * self.sigma_H0 * m.sqrt(self.K_S * self.K_V[idx] * self.K_Hbeta[idx] * self.K_Halpha[idx])
+        def sigma_Hdyn(idx):
+            return (self.Z_B if idx == Ritzel else self.Z_D) * self.sigma_H0 * m.sqrt(self.K_A * self.K_V[idx] * self.K_Hbeta[idx] * self.K_Halpha[idx])
+        self.sigma_Hstat = sigma_Hstat(Ritzel), sigma_Hstat(Rad)
+        self.sigma_Hdyn = sigma_Hdyn(Ritzel), sigma_Hdyn(Rad)
+        print(f"sigma_Hstat = {self.sigma_Hstat}")
+        print(f"sigma_Hdyn = {self.sigma_Hdyn}")
+
+        # Glg 4.11
+        def S_Hstat(idx):
+            return self.sigma_HGstat[idx] / self.sigma_Hstat[idx]
+        def S_Hdyn(idx):
+            return self.sigma_HGdyn[idx] / self.sigma_Hdyn[idx]
+        self.S_Hstat = S_Hstat(Ritzel), S_Hstat(Rad)
+        self.S_Hdyn = S_Hdyn(Ritzel), S_Hdyn(Rad)
+        print(f"S_Hstat = {self.S_Hstat}")
+        print(f"S_Hdyn = {self.S_Hdyn}")
+
+        # Zahnfußtragfähigkeit
+
+        # Glg D.1.01
+        def z_n(idx):
+            return self.z[idx] / m.cos(m.radians(self.beta_b))**2 / m.cos(m.radians(self.beta))
+        self.z_n = z_n(Ritzel), z_n(Rad)
+        print(f"z_n = {self.z_n}")
+
+        if not self.innenverzahnt:
+            # Glg D.5.01
+            self.E = m.pi / 4 * self.m_n - self.h_fP * m.tan(m.radians(self.alpha_n)) + self.s_pr / m.cos(m.radians(self.alpha_n)) - (1 - m.sin(m.radians(self.alpha_n))) * self.rho_fP / m.cos(m.radians(self.alpha_n)) 
+            print(f"E = {self.E}")
+
+            # Glg D.5.02
+            def G(idx):
+                return self.rho_fP / self.m_n - self.h_fP / self.m_n + self.x[idx]
+            self.G = G(Ritzel), G(Rad)
+            print(f"G = {self.G}")
+
+            # Glg D.5.03
+            def H(idx):
+                return 2 / self.z_n[idx] * (m.pi / 2 - self.E / self.m_n) - m.pi / 3
+            self.H = H(Ritzel), H(Rad)
+            print(f"H = {self.H}")
+
+            # Glg D.5.04
+            def delta(idx):
+                delta = m.degrees(m.pi / 6)
+                for i in range(5):
+                    delta = m.degrees(2 * self.G[idx] / self.z_n[idx] * m.tan(m.radians(delta)) - self.H[idx])
+                return delta
+            self.delta = delta(Ritzel), delta(Rad)
+            print(f"delta = {self.delta}")
+
+            # Glg D.5.05
+            def s_Fn(idx):
+                return self.m_n * (self.z_n[idx] * m.sin(m.pi / 3 - m.radians(self.delta[idx])) + m.sqrt(3) * (self.G[idx] / m.cos(m.radians(self.delta[idx])) - self.rho_fP / self.m_n))
+            self.s_Fn = s_Fn(Ritzel), s_Fn(Rad)
+            print(f"s_Fn = {self.s_Fn}")
+
+            # Glg D.5.06
+            def d_n(idx):
+                return self.m_n * self.z_n[idx]
+            self.d_n = d_n(Ritzel), d_n(Rad)
+            print(f"d_n = {self.d_n}")
+
+            # Glg D.5.07
+            def d_bn(idx):
+                return self.d_n[idx] * m.cos(m.radians(self.alpha_n))
+            self.d_bn = d_bn(Ritzel), d_bn(Rad)
+            print(f"d_bn = {self.d_bn}")
+
+            # Glg D.5.08
+            def d_an(idx):
+                return self.d_n[idx] + self.d_a[idx] - self.d[idx]
+            self.d_an = d_an(Ritzel), d_an(Rad)
+            print(f"d_an = {self.d_an}")
+
+            # Glg D.5.09
+            def alpha_an(idx):
+                return m.degrees(m.acos(self.d_bn[idx] / self.d_an[idx]))
+            self.alpha_an = alpha_an(Ritzel), alpha_an(Rad)
+            print(f"alpha_an = {self.alpha_an}")
+
+            # Glg D.5.10
+            def y_a(idx):
+                return 1 / self.z_n[idx] * (m.pi / 2 + 2 * self.x[idx] * m.tan(m.radians(self.alpha_n))) + involute(self.alpha_n) - involute(self.alpha_an[idx])
+            self.y_a = y_a(Ritzel), y_a(Rad)
+            print(f"y_a = {self.y_a}")
+
+            # Glg D.5.11
+            def alpha_Fan(idx):
+                return self.alpha_an[idx] - m.degrees(self.y_a[idx])
+            self.alpha_Fan = alpha_Fan(Ritzel), alpha_Fan(Rad)
+            print(f"alpha_Fan = {self.alpha_Fan}")
+
+            # Glg D.5.12
+            def h_Fa(idx):
+                return self.m_n * (0.5 * self.z_n[idx] * (m.cos(m.radians(self.alpha_n)) / m.cos(m.radians(self.alpha_Fan[idx])) - m.cos(m.pi / 3 - m.radians(self.delta[idx])))
+                                   + 0.5 * (self.rho_fP / self.m_n - self.G[idx] / m.cos(m.radians(self.delta[idx]))))
+            self.h_Fa = h_Fa(Ritzel), h_Fa(Rad)
+            print(f"h_Fa = {self.h_Fa}")
+
+            # Glg D.5.13
+            def rho_F(idx):
+                return self.rho_fP + self.m_n * 2 * self.G[idx]**2 / m.cos(m.radians(self.delta[idx])) / (self.z_n[idx] * m.cos(m.radians(self.delta[idx]))**2 - 2 * self.G[idx])
+            self.rho_F = rho_F(Ritzel), rho_F(Rad)
+            print(f"rho_F = {self.rho_F}")
+        else:
+            raise NotImplementedError
+
+        # Glg D.3.01
+        def Y_Fa(idx):
+            return (6 * self.h_Fa[idx] / self.m_n * m.cos(m.radians(self.alpha_Fan[idx]))) / ((self.s_Fn[idx] / self.m_n)**2 * m.cos(m.radians(self.alpha_n)))
+        self.Y_Fa = Y_Fa(Ritzel), Y_Fa(Rad)
+        print(f"Y_Fa = {self.Y_Fa}")
+
+        # Glg D.4.02
+        def L_a(idx):
+            return self.s_Fn[idx] / self.h_Fa[idx]
+        self.L_a = L_a(Ritzel), L_a(Rad)
+        print(f"L_a = {self.L_a}")
+
+        # Glg D.4.03
+        def q_s(idx):
+            return self.s_Fn[idx] / 2 / self.rho_F[idx]
+        self.q_s = q_s(Ritzel), q_s(Rad)
+        print(f"q_s = {self.q_s}")
+        assert all(1 <= q_s < 8 for q_s in self.q_s)
+
+        # Glg D.4.01
+        def Y_Sa(idx):
+            return (1.2 + 0.13 * self.L_a[idx]) * m.pow(self.q_s[idx], 1 / (1.21 + 2.3 / self.L_a[idx]))
+        self.Y_Sa = Y_Sa(Ritzel), Y_Sa(Rad)
+        print(f"Y_Sa = {self.Y_Sa}")
+
+        # Glg 5.08
+        def Y_FS(idx):
+            return self.Y_Sa[idx] * self.Y_Fa[idx]
+        self.Y_FS = Y_FS(Ritzel), Y_FS(Rad)
+        print(f"Y_FS = {self.Y_FS}")
+
+        # Glg 5.09
+        self.Y_epsilon = 0.25 + 0.75 / self.epsilon_alpha * m.cos(m.radians(self.beta_b))**2
+        print(f"Y_epsilon = {self.Y_epsilon}")
+
+        # Glg 5.10
+        self.Y_beta = 1 - min(self.epsilon_beta, 1.) * min(self.beta, 30) / 120
+        print(f"Y_beta = {self.Y_beta}")
+ 
+        # Tabelle 5.8
+        epsilon_alphan = self.epsilon_alpha / m.cos(m.radians(self.beta_b))**2
+        def Y_S(idx):
+            return self.Y_Sa[idx] * (0.6 + 0.4 * epsilon_alphan)
+        self.Y_S = Y_S(Ritzel), Y_S(Rad)
+        print(f"Y_S = {self.Y_S}")
+
+        # Abschnitt 5.6
+        def Y_deltarelTstat(idx : int):
+            wsart = self.werkstoff[idx].art
+            Art = Werkstoff.Art
+            if wsart in (Art.Baustahl, ):
+                raise NotImplementedError
+            elif wsart in (Art.vergüteterStahl, ):
+                raise NotImplementedError
+            elif wsart in (Art.einsatzgehärteterStahl, ):
+                return 0.44 * self.Y_S[idx] + 0.12
+            elif wsart in (Art.nitrierterStahl, Art.nitrokarburierterStahl ):
+                return 0.20 * self.Y_S[idx] + 0.60
+            raise NotImplementedError
+        # Glg 5.11, 5.12
+        def Y_deltarelTdyn(idx):
+            if self.q_s[idx] >= 1.5:
+                return 1.
+            else:
+                return 0.95
+        self.Y_deltarelTstat = Y_deltarelTstat(Ritzel), Y_deltarelTstat(Rad)
+        self.Y_deltarelTdyn = Y_deltarelTdyn(Ritzel), Y_deltarelTdyn(Rad)
+        print(f"Y_deltarelTstat = {self.Y_deltarelTstat}")
+        print(f"Y_deltarelTdyn = {self.Y_deltarelTdyn}")
+
+        # Abschnitt 5.7
+        self.Y_RrelTstat = 1.
+        if self.R_z <= 16:
+            self.Y_RrelTdyn = 1.
+        else:
+            self.Y_RrelTdyn = 0.9
+        print(f"Y_RrelTstat = {self.Y_RrelTstat}")
+        print(f"Y_RrelTdyn = {self.Y_RrelTdyn}")
+
+        # Tabelle 5.1
+        def Y_Xdyn(idx : int):
+            wsart = self.werkstoff[idx].art
+            Art = Werkstoff.Art
+            if wsart in (Art.Baustahl, Art.vergüteterStahl):
+                if self.m_n <= 5:
+                    return 1.
+                elif self.m_n < 30:
+                    return 1.03 - 0.006  * self.m_n
+                else:
+                    return 0.85
+            elif wsart in (Art.einsatzgehärteterStahl, Art.nitrierterStahl, Art.nitrokarburierterStahl):
+                if self.m_n <= 5:
+                    return 1.
+                elif self.m_n < 25:
+                    return 1.05 - 0.01  * self.m_n
+                else:
+                    return 0.8
+            raise NotImplementedError
+        self.Y_Xstat = 1., 1.
+        self.Y_Xdyn = Y_Xdyn(Ritzel), Y_Xdyn(Rad)
+        print(f"Y_Xstat = {self.Y_Xstat}")
+        print(f"Y_Xdyn = {self.Y_Xdyn}")
+
+        # Tabelle 5.2
+        def Y_NT(idx : int):
+            wsart = self.werkstoff[idx].art
+            Art = Werkstoff.Art
+            if wsart in (Art.Baustahl, Art.vergüteterStahl):
+                return 2.5, 1.0
+            elif wsart in (Art.einsatzgehärteterStahl, ):
+                return 2.5, 1.0
+            elif wsart in (Art.nitrierterStahl, ):
+                return 1.6, 1.0
+            elif wsart in (Art.nitrokarburierterStahl, ):
+                return 1.1, 1.0
+            raise NotImplementedError
+        Y_NTritzel = Y_NT(Ritzel)
+        Y_NTrad = Y_NT(Rad)
+        self.Y_NTstat = Y_NTritzel[0], Y_NTrad[0]
+        self.Y_NTdyn = Y_NTritzel[1], Y_NTrad[1]
+
+        # Glg 5.03
+        def sigma_FGstat(idx):
+            return self.werkstoff[idx].sigma_FE * self.Y_NTstat[idx] * self.Y_deltarelTstat[idx] * self.Y_RrelTstat * self.Y_Xstat[idx]
+        def sigma_FGdyn(idx):
+            return self.werkstoff[idx].sigma_FE * self.Y_NTdyn[idx] * self.Y_deltarelTdyn[idx] * self.Y_RrelTdyn * self.Y_Xdyn[idx]
+        self.sigma_FGstat = sigma_FGstat(Ritzel), sigma_FGstat(Rad)
+        self.sigma_FGdyn = sigma_FGdyn(Ritzel), sigma_FGdyn(Rad)
+        print(f"sigma_FGstat = {self.sigma_FGstat}")
+        print(f"sigma_FGdyn = {self.sigma_FGdyn}")
+
+        # Glg 5.02
+        def sigma_F0(idx):
+            return self.F_t / self.b / self.m_n * self.Y_FS[idx] * self.Y_epsilon * self.Y_beta
+        self.sigma_F0 = sigma_F0(Ritzel), sigma_F0(Rad)
+        print(f"sigma_F0 = {self.sigma_F0}")
+
+        # Glg 5.01
+        def sigma_Fstat(idx):
+            return self.sigma_F0[idx] * self.K_S * self.K_V[idx] * self.K_Fbeta[idx] * self.K_Falpha[idx]
+        def sigma_Fdyn(idx):
+            return self.sigma_F0[idx] * self.K_A * self.K_V[idx] * self.K_Fbeta[idx] * self.K_Falpha[idx]
+        self.sigma_Fstat = sigma_Fstat(Ritzel), sigma_Fstat(Rad)
+        self.sigma_Fdyn = sigma_Fdyn(Ritzel), sigma_Fdyn(Rad)
+        print(f"sigma_Fstat = {self.sigma_Fstat}")
+        print(f"sigma_Fdyn = {self.sigma_Fdyn}")
+
+        # Glg 5.07
+        def S_Fstat(idx):
+            return self.sigma_FGstat[idx] / self.sigma_Fstat[idx]
+        def S_Fdyn(idx):
+            return self.sigma_FGdyn[idx] / self.sigma_Fdyn[idx]
+        self.S_Fstat = S_Fstat(Ritzel), S_Fstat(Rad)
+        self.S_Fdyn = S_Fdyn(Ritzel), S_Fdyn(Rad)
+        print(f"S_Fstat = {self.S_Fstat}")
+        print(f"S_Fdyn = {self.S_Fdyn}")
+
+        print()
         return
 
+    def ist_sicher(self, S_Hstat : float | tuple[float, float], S_Hdyn : float | tuple[float, float], S_Fstat : float | tuple[float, float], S_Fdyn : float | tuple[float, float], output = True):
 
+        def check_value(string, val, min_or_interv):
+            if isinstance(min_or_interv, tuple):
+                print(f"{string} = {val} soll in {min_or_interv} liegen")
+                return min_or_interv[0] <= val <= min_or_interv[1]
+            else:
+                print(f"{string} = {val} soll >= {min_or_interv}")
+                return min_or_interv <= val
+
+        def check_values(idx):
+            result = True
+            print("Ritzel" if idx == Ritzel else "Rad")
+            if not check_value("S_Hstat", self.S_Hstat[idx], S_Hstat):
+                result = False
+                print("\033[91mstatische Grübchensicherheit ist nicht erfüllt\033[0m")
+            if not check_value("S_Hdyn", self.S_Hdyn[idx], S_Hdyn):
+                result = False
+                print("\033[91mdynamische Grübchensicherheit ist nicht erfüllt\033[0m")
+            if not check_value("S_Fstat", self.S_Fstat[idx], S_Fstat):
+                result = False
+                print("\033[91mstatische Zahnbruchsicherheit ist nicht erfüllt\033[0m")
+            if not check_value("S_Fdyn", self.S_Fdyn[idx], S_Fdyn):
+                result = False
+                print("\033[91mdynamische Zahnbruchsicherheit ist nicht erfüllt\033[0m")
+            print()
+            return result
+
+        with HiddenPrints(not output):
+            return check_values(Ritzel) & check_values(Rad)
+        
 
     pass
 
-"""
 
-berechnung von Ritzel und Rad kann nicht getrennt durchgeführt werden
-
-"""
-
-getriebe = Getriebe(m_n = 4,
-                    z = (19, 104),
-                    x = (0.5, 0.15),
-                    bezugsprofil = Normalprofil1,
-                    beta = 0,
-                    k = 0,
-                    b_d_1_verhältnis = 0.64)
-
-werkstoff = Werkstoff(Werkstoff.Art.einsatzgehärteterStahl, 1500, 860)
-getriebe.Zahnräder(P = 55,
-            n_1 = 980,
-            verzahnungsqualitäten = (6, 7),
-            werkstoffe = werkstoff,
-            K_A = 1.75,
-            K_S = 2.5,
-            A = 0.023,
-
-            f_ma = 0,
-            f_Hbeta = 0)
-
-
-
-assert(self.b / self.m_n <= 30) # Konstruktionsvorgaben, Tabelle 4
-
-sys.exit()
-
-execute(P = 55,
+"""execute(P = 55,
             n = 980,
             b_d_1_verhaeltnis = 0.64,
             verzahnungs_qualitaten = (6, 7),
@@ -920,7 +1445,38 @@ execute(P = 55,
             sigma_Hlim = 1500,
             sigma_FE = 860,
             K_A = 1.75,
-            K_S = 2.5)
+            K_S = 2.5)"""
+
+
+getriebe = Getriebe(m_n = 4,
+                    z = (19, 104),
+                    x = (0.5, 0.15),
+                    bezugsprofil = Normalprofil1,
+                    beta = 0,
+                    k = 0,
+                    b_d_1_verhältnis = 0.64)
+
+werkstoff = Werkstoff(Werkstoff.Art.einsatzgehärteterStahl, 1500, 860, 220)
+getriebe.Zahnräder(P = 55,
+            n_1 = 980,
+            verzahnungsqualität = (6, 7),
+            werkstoff = werkstoff,
+            K_A = 1.75,
+            K_S = 2.5,
+            A = 0.023,
+
+            f_ma = 0,
+            f_Hbeta = 0)
+
+result = getriebe.ist_sicher(S_Hstat_min, S_Hdyn_interval, S_Fstat_min, S_Fdyn_interval)
+
+
+
+assert(getriebe.b / getriebe.m_n <= 30) # Konstruktionsvorgaben, Tabelle 4
+
+sys.exit()
+
+
 
 
 """K_A_in = (1.5, 1.6, 1.75, 1.85)
