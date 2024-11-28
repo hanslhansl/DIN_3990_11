@@ -23,6 +23,9 @@ class HiddenPrints:
             sys.stdout.close()
             sys.stdout = self._original_stdout
 
+def to_float(val) -> float:
+    return val
+
 def involute(alpha):
     return m.tan(m.radians(alpha)) - m.radians(alpha)
 def inverse_involute(alpha, anfangswert = 20):
@@ -503,9 +506,6 @@ def execute(P, n, b_d_1_verhaeltnis, verzahnungs_qualitaten, m_n, z_1, z_2, x_1,
   rad = Festigkeitsnachweis(verzahnungs_qualitaten[1], 0, 0, False)
 
   return ritzel and rad
-
-def to_float(val) -> float:
-    return val
 
 class Getriebe:
     
@@ -1425,9 +1425,8 @@ class Getriebe:
 
         with HiddenPrints(not output):
             return check_values(Ritzel) & check_values(Rad)
-        
 
-    pass
+
 
 
 """execute(P = 55,
@@ -1456,11 +1455,10 @@ getriebe = Getriebe(m_n = 4,
                     k = 0,
                     b_d_1_verhältnis = 0.64)
 
-werkstoff = Werkstoff(Werkstoff.Art.einsatzgehärteterStahl, 1500, 860, 220)
 getriebe.Zahnräder(P = 55,
             n_1 = 980,
             verzahnungsqualität = (6, 7),
-            werkstoff = werkstoff,
+            werkstoff = Werkstoff(Werkstoff.Art.einsatzgehärteterStahl, 1500, 860, 220),
             K_A = 1.75,
             K_S = 2.5,
             A = 0.023,
