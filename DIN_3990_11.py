@@ -295,27 +295,6 @@ class Getriebe:
             self._Zahnräder()
         return
 
-    def _f_Hbeta(self):
-        """DIN 3962-2"""
-        def f_Hbeta(idx):
-            q = self.verzahnungsqualität[idx]
-            if self.b <= 20:
-                pass
-            elif self.b <= 40:
-                pass
-            elif self.b <= 100:
-                match q:
-                    case 6:
-                        return 10.
-                    case 7:
-                        return 14.
-            elif self.b <= 160:
-                pass
-            else:
-                pass
-            raise NotImplementedError
-        return f_Hbeta(Ritzel), f_Hbeta(Rad)
-
     def _K_V(self):
         # Glg 3.04
         temp1 = self.z[Ritzel] * self.v / 100 * m.sqrt(self.u**2 / (1 + self.u**2))
@@ -415,9 +394,6 @@ class Getriebe:
         self.f_sh = f_sh(Ritzel), f_sh(Rad)
         print(f"f_sh = {self.f_sh}")
 
-        self.f_Hbeta = self._f_Hbeta()
-        print(f"f_Hbeta = {self.f_Hbeta}")
-        
         # Glg 3.09
         def F_betax(idx) -> float:
             def multi(idx):
