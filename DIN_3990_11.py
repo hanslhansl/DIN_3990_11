@@ -67,6 +67,7 @@ class Tabelle_3_2(Enum):
     ohneBreitenballigkeltOderEndrücknahme = 0
     mitSinnvollerBreitenballigkeit = 1
     mitSinnvollerEndrücknahme = 2
+
 class Bild_3_1(Enum):
     a = 0
     b = 1
@@ -74,12 +75,14 @@ class Bild_3_1(Enum):
     d = 3
     e = 4
     f = 5
+
 class Bild_3_2(Enum):
     a = 0
     b = 1
     c = 2
     d = 3
     e = 4
+
 class Fertigungsverfahren(Enum):
     wälzgefrästWälzgestoßenWälzgehobelt = 0
     geläpptGeschliffenGeschabt = 1
