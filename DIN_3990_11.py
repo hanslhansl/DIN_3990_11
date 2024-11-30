@@ -232,10 +232,10 @@ class Getriebe:
                 innenverzahnt: bool = False,
                 s_pr: float = 0,
                 _print = print,
-                _assert = False,
+                _assert: bool = False,
                 **kwargs):
         """
-        Parameter:
+        Parameters:
         - geometrie
         - P: Leistung [kW]
         - n_1: Antriebsdrehzahl [1/min]
@@ -247,8 +247,10 @@ class Getriebe:
         - doppelschrägverzahnt
         - innenverzahnt
         - s_pr: float, Fussfreischnitt
+        - _print: the function used for printing
+        - _assert if True, safety is asserted which additionally requires the same arguments as passed to Getriebe.is_save()
 
-        Zusätzliche Parameter:
+        Additional parameters:
         - K_Hbeta : tuple[float, float]
           or 
             - A: Tabelle_3_2, siehe Tabelle 3.2
