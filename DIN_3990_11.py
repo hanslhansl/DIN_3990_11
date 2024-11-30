@@ -87,8 +87,7 @@ class Fertigungsverfahren(Enum):
     wälzgefrästWälzgestoßenWälzgehobelt = 0
     geläpptGeschliffenGeschabt = 1
 
-class Getriebe:
-    
+class Geometrie:
     def __init__(self,
             m_n : float,
             z: tuple[int, int],
@@ -225,8 +224,10 @@ class Getriebe:
         assert len(kwargs) == 0, f"unknown arguments: {kwargs.keys()}"
         print()
         return
-    
-    def Zahnräder(self,
+  
+class Getriebe:
+    def __init__(self,
+                geometrie : Geometrie,
                 P : float,
                 n_1 : float,
                 verzahnungsqualität : tuple[int, int],
@@ -241,6 +242,7 @@ class Getriebe:
                 **kwargs):
         """
         Parameter:
+        - geometrie
         - P: Leistung [kW]
         - n_1: Antriebsdrehzahl [1/min]
         - verzahnungsqualität: siehe Tabelle 3.1
@@ -283,8 +285,9 @@ class Getriebe:
             def to_tuple(val):
                 return val if isinstance(val, tuple) else (val, val)
 
+            self.geometrie = geometrie
             self.P = P
-            self.n = (n_1, n_1 / self.u)
+            self.n = (n_1, n_1 / self.geometrie.u)
             self.verzahnungsqualität = to_tuple(verzahnungsqualität)
             self.werkstoff = to_tuple(werkstoff)
             self.K_A = K_A
@@ -295,15 +298,15 @@ class Getriebe:
             self.s_pr = s_pr
             self.__dict__.update(kwargs)
 
-            self._Zahnräder()
+            self._init()
         return
 
     def _K_V(self):
         # Glg 3.04
-        temp1 = self.z[Ritzel] * self.v / 100 * m.sqrt(self.u**2 / (1 + self.u**2))
+        temp1 = self.geometrie.z[Ritzel] * self.v / 100 * m.sqrt(self.geometrie.u**2 / (1 + self.geometrie.u**2))
         assert temp1 < 10  
 
-        temp2 = max(self.K_A * self.F_t / self.b, 100)
+        temp2 = max(self.K_A * self.F_t / self.geometrie.b, 100)
 
         def K_V(idx, geradverzahnt) -> float:
             if geradverzahnt:
@@ -341,9 +344,9 @@ class Getriebe:
                         K_1 = 109.1
                 K_2 = 0.0087
             return 1 + (K_1 / temp2 + K_2) * temp1
-        if self.beta == 0:
+        if self.geometrie.beta == 0:
             return K_V(Ritzel, True), K_V(Rad, True)
-        elif self.epsilon_beta >= 1:
+        elif self.geometrie.epsilon_beta >= 1:
             return K_V(Ritzel, False), K_V(Rad, False)
         else:
             K_Valpha = K_V(Ritzel, True), K_V(Rad, True)
@@ -351,12 +354,12 @@ class Getriebe:
             print(f"K_Valpha = {K_Valpha}")
             print(f"K_Vbeta = {K_Vbeta}")
             def interp(idx) -> float:
-                return K_Valpha[idx] - self.epsilon_beta * (K_Valpha[idx] - K_Vbeta[idx])
+                return K_Valpha[idx] - self.geometrie.epsilon_beta * (K_Valpha[idx] - K_Vbeta[idx])
             return interp(Ritzel), interp(Rad)
 
     def _K_Hbeta(self):
         # Abschnitt 3.4.1
-        assert(self.F_t / self.b * self.K_A >= 100)
+        assert(self.F_t / self.geometrie.b * self.K_A >= 100)
 
         # Glg 3.07
         def F_m(idx) -> float:
@@ -382,7 +385,7 @@ class Getriebe:
         # Glg 3.14, 3.15
         def f_sh(idx) -> float:
             def temp(idx) -> float:
-                return 0. if self.s[idx] == 0 else K_s(idx) * self.l[idx] * self.s[idx] / self.d[Ritzel]**2 * (self.d[Ritzel] / self.d_sh[idx])**4
+                return 0. if self.s[idx] == 0 else K_s(idx) * self.l[idx] * self.s[idx] / self.geometrie.d[Ritzel]**2 * (self.geometrie.d[Ritzel] / self.d_sh[idx])**4
             if self.A == Tabelle_3_2.ohneBreitenballigkeltOderEndrücknahme:
                 A = 0.023
             elif self.A == Tabelle_3_2.mitSinnvollerBreitenballigkeit:
@@ -391,9 +394,9 @@ class Getriebe:
                 A = 0.016
 
             if not self.doppelschrägverzahnt:
-                return self.F_m[idx] / self.b * A * (abs(1 + temp(idx) - 0.3) + 0.3) * (self.b / self.d[Ritzel])**2
+                return self.F_m[idx] / self.geometrie.b * A * (abs(1 + temp(idx) - 0.3) + 0.3) * (self.geometrie.b / self.geometrie.d[Ritzel])**2
             else:
-                return self.F_m[idx] / self.b * 2 * A * (abs(1.5 + temp(idx) - 0.3) + 0.3) * (self.b_B / self.d[Ritzel])**2
+                return self.F_m[idx] / self.geometrie.b * 2 * A * (abs(1.5 + temp(idx) - 0.3) + 0.3) * (self.b_B / self.geometrie.d[Ritzel])**2
         self.f_sh = f_sh(Ritzel), f_sh(Rad)
         print(f"f_sh = {self.f_sh}")
 
@@ -451,40 +454,40 @@ class Getriebe:
         
         # Glg 3.20, 3.21
         def K_Hbeta(idx):
-            val = 1 + self.c_gamma * self.F_betay[idx] / (2 * self.F_m[idx] / self.b)
+            val = 1 + self.c_gamma * self.F_betay[idx] / (2 * self.F_m[idx] / self.geometrie.b)
             if val <= 2:
                 return val
-            return m.sqrt(2 * self.c_gamma * self.F_betay[idx] / (self.F_m[idx] / self.b))
+            return m.sqrt(2 * self.c_gamma * self.F_betay[idx] / (self.F_m[idx] / self.geometrie.b))
         return K_Hbeta(Ritzel), K_Hbeta(Rad)
 
     def _K_Fbeta(self):
         # Abschnitt 3.4.1
-        assert(self.F_t / self.b * self.K_A >= 100)
+        assert(self.F_t / self.geometrie.b * self.K_A >= 100)
 
         # Glg 3.22
         def K_Fbeta(idx):
-            h_b = min(self.h / self.b, 1. / 3.)
+            h_b = min(self.geometrie.h / self.geometrie.b, 1. / 3.)
             return m.pow(self.K_Hbeta[idx], (1 / (1 + h_b + h_b**2)))
         return K_Fbeta(Ritzel), K_Fbeta(Rad)
 
-    def _Zahnräder(self):
+    def _init(self):
         assert all(vq in range(6, 13) for vq in self.verzahnungsqualität)
         
         print("DIN 3990-11")
         print(f"n = {self.n}")
 
         if self.doppelschrägverzahnt:
-            self.b_B = self.b / 2
+            self.b_B = self.geometrie.b / 2
             print(f"d_B = {self.d_B}")
 
-        self.v = self.n[Ritzel] / 60 * 2 * m.pi * self.d[Ritzel] / 2000
+        self.v = self.n[Ritzel] / 60 * 2 * m.pi * self.geometrie.d[Ritzel] / 2000
         print(f"v = {self.v}")
 
         self.F_t = 1000 * self.P / self.v
         print(f"F_t = {self.F_t}")
   
         def T(idx):
-            return self.F_t * self.d[idx] / 2000
+            return self.F_t * self.geometrie.d[idx] / 2000
         self.T = T(Ritzel), T(Rad)
         print(f"T = {self.T}")
 
@@ -501,27 +504,27 @@ class Getriebe:
         print(f"K_Fbeta = {self.K_Fbeta}")
         
         # Abschnitt 4.5
-        if self.beta == 0:
-            self.Z_epsilon = m.sqrt((4. - self.epsilon_alpha) / 3.)
-        elif self.epsilon_beta >= 1.:
-            self.Z_epsilon = m.sqrt(1 / self.epsilon_alpha)
+        if self.geometrie.beta == 0:
+            self.Z_epsilon = m.sqrt((4. - self.geometrie.epsilon_alpha) / 3.)
+        elif self.geometrie.epsilon_beta >= 1.:
+            self.Z_epsilon = m.sqrt(1 / self.geometrie.epsilon_alpha)
         else:
-            self.Z_epsilon = m.sqrt((4. - self.epsilon_alpha) / 3. * (1. - self.epsilon_beta) + self.epsilon_beta / self.epsilon_alpha)
+            self.Z_epsilon = m.sqrt((4. - self.geometrie.epsilon_alpha) / 3. * (1. - self.geometrie.epsilon_beta) + self.geometrie.epsilon_beta / self.geometrie.epsilon_alpha)
         print(f"Z_epsilon = {self.Z_epsilon}")
 
         # Glg 5.09
-        self.Y_epsilon = 0.25 + 0.75 / self.epsilon_alpha * m.cos(m.radians(self.beta_b))**2
+        self.Y_epsilon = 0.25 + 0.75 / self.geometrie.epsilon_alpha * m.cos(m.radians(self.geometrie.beta_b))**2
         print(f"Y_epsilon = {self.Y_epsilon}")
 
         # Tabelle 3.3
         def K_Halpha_und_Falpha(idx : int):
-            linienbelastung = self.F_t / self.b * self.K_A
+            linienbelastung = self.F_t / self.geometrie.b * self.K_A
             art = self.werkstoff[idx].art
             qualität = self.verzahnungsqualität[idx]
             Art = Werkstoff.Art
 
             if art in (Art.einsatzgehärteterStahl, Art.nitrierterStahl, Art.nitrokarburierterStahl):
-                if self.beta == 0:
+                if self.geometrie.beta == 0:
                     if linienbelastung > 100:
                         match qualität:
                             case 6 | 7:
@@ -555,16 +558,16 @@ class Getriebe:
                             case 9:
                                 return 1.4, 1.4
                             case 10 | 11 | 12:
-                                K = self.epsilon_alpha / m.cos(m.radians(self.beta_b))**2
+                                K = self.geometrie.epsilon_alpha / m.cos(m.radians(self.geometrie.beta_b))**2
                                 assert K >= 1.4
                                 return K, K
                     else:
                         if qualität <= 6:
-                            K = self.epsilon_alpha / m.cos(m.radians(self.beta_b))**2
+                            K = self.geometrie.epsilon_alpha / m.cos(m.radians(self.geometrie.beta_b))**2
                             assert K >= 1.4
                             return K, K
             else:
-                if self.beta == 0:
+                if self.geometrie.beta == 0:
                     if linienbelastung > 100:
                         match qualität:
                             case 6 | 7 | 8:
@@ -598,12 +601,12 @@ class Getriebe:
                             case 10:
                                 return 1.4, 1.4
                             case 11 | 12:
-                                K = self.epsilon_alpha / m.cos(m.radians(self.beta_b))**2
+                                K = self.geometrie.epsilon_alpha / m.cos(m.radians(self.geometrie.beta_b))**2
                                 assert K >= 1.4
                                 return K, K
                     else:
                         if qualität <= 6:
-                            K = self.epsilon_alpha / m.cos(m.radians(self.beta_b))**2
+                            K = self.geometrie.epsilon_alpha / m.cos(m.radians(self.geometrie.beta_b))**2
                             assert K >= 1.4
                             return K, K
 
@@ -620,34 +623,35 @@ class Getriebe:
         # Grübchentragfähigkeit
         
         # Glg 4.12
-        self.M_1 = m.tan(m.radians(self.alpha_wt)) / m.sqrt(
-            (m.sqrt(self.d_a[Ritzel]**2 / self.d_b[Ritzel]**2 - 1) - 2 * m.pi / self.z[Ritzel]) *
-            (m.sqrt(self.d_a[Rad]**2 / self.d_b[Rad]**2 - 1) - (self.epsilon_alpha - 1) * 2 * m.pi / self.z[Rad]))
+        self.M_1 = m.tan(m.radians(self.geometrie.alpha_wt)) / m.sqrt(
+            (m.sqrt(self.geometrie.d_a[Ritzel]**2 / self.geometrie.d_b[Ritzel]**2 - 1) - 2 * m.pi / self.geometrie.z[Ritzel]) *
+            (m.sqrt(self.geometrie.d_a[Rad]**2 / self.geometrie.d_b[Rad]**2 - 1) - (self.geometrie.epsilon_alpha - 1) * 2 * m.pi / self.geometrie.z[Rad]))
         print(f"M_1 = {self.M_1}")
 
         # Glg 4.13
-        self.M_2 = m.tan(m.radians(self.alpha_wt)) / m.sqrt(
-            (m.sqrt(self.d_a[Rad]**2 / self.d_b[Rad]**2 - 1) - 2 * m.pi / self.z[Rad]) *
-            (m.sqrt(self.d_a[Ritzel]**2 / self.d_b[Ritzel]**2 - 1) - (self.epsilon_alpha - 1) * 2 * m.pi / self.z[Ritzel]))
+        self.M_2 = m.tan(m.radians(self.geometrie.alpha_wt)) / m.sqrt(
+            (m.sqrt(self.geometrie.d_a[Rad]**2 / self.geometrie.d_b[Rad]**2 - 1) - 2 * m.pi / self.geometrie.z[Rad]) *
+            (m.sqrt(self.geometrie.d_a[Ritzel]**2 / self.geometrie.d_b[Ritzel]**2 - 1) - (self.geometrie.epsilon_alpha - 1) * 2 * m.pi / self.geometrie.z[Ritzel]))
         print(f"M_2 = {self.M_2}")
 
         # Abschnitt 4.2
-        if self.beta == 0:
+        if self.geometrie.beta == 0:
             self.Z_B = max(1., self.M_1)
             self.Z_D = max(1., self.M_2)
-        elif self.epsilon_beta >= 1:
+        elif self.geometrie.epsilon_beta >= 1:
             self.Z_B = 1.
             self.Z_D = 1.
         else:
-            self.Z_B = max(1., self.M_1 - self.epsilon_beta * (self.M_1 - 1))
-            self.Z_D = max(1., self.M_2 - self.epsilon_beta * (self.M_2 - 1))
+            self.Z_B = max(1., self.M_1 - self.geometrie.epsilon_beta * (self.M_1 - 1))
+            self.Z_D = max(1., self.M_2 - self.geometrie.epsilon_beta * (self.M_2 - 1))
         if self.innenverzahnt:
             self.Z_D = 1.
         print(f"Z_B = {self.Z_B}")
         print(f"Z_D = {self.Z_D}")
 
         # Glg. 4.14
-        self.Z_H = m.sqrt(2 * m.cos(m.radians(self.beta_b)) * m.cos(m.radians(self.alpha_wt)) / m.cos(m.radians(self.alpha_t))**2 / m.sin(m.radians(self.alpha_wt)))
+        self.Z_H = m.sqrt(2 * m.cos(m.radians(self.geometrie.beta_b)) * m.cos(m.radians(self.geometrie.alpha_wt))
+                          / m.cos(m.radians(self.geometrie.alpha_t))**2 / m.sin(m.radians(self.geometrie.alpha_wt)))
         print(f"Z_H = {self.Z_H}")
 
         # Tabelle 4.1
@@ -661,11 +665,11 @@ class Getriebe:
         print(f"Z_E = {self.Z_E}")
 
         # Glg 4.18
-        self.Z_beta = m.sqrt(m.cos(m.radians(self.beta)))
+        self.Z_beta = m.sqrt(m.cos(m.radians(self.geometrie.beta)))
         print(f"Z_beta = {self.Z_beta}")
 
         # Glg 4.20
-        self.R_z100 = sum(self.R_z) / 2 * m.pow(100 / self.a_w, 1/3)
+        self.R_z100 = sum(self.R_z) / 2 * m.pow(100 / self.geometrie.a_w, 1/3)
         print(f"R_z100 = {self.R_z100}")
 
         # Glg 4.19
@@ -710,17 +714,17 @@ class Getriebe:
             if wsart in (Art.Baustahl, Art.vergüteterStahl):
                 return 1.
             elif wsart in (Art.einsatzgehärteterStahl, ):
-                if self.m_n <= 10:
+                if self.geometrie.m_n <= 10:
                     return 1.
-                elif self.m_n < 30:
-                    return 1.05 - 0.005  * self.m_n
+                elif self.geometrie.m_n < 30:
+                    return 1.05 - 0.005  * self.geometrie.m_n
                 else:
                     return 0.9
             elif wsart in (Art.nitrierterStahl, Art.nitrokarburierterStahl):
-                if self.m_n <= 7.5:
+                if self.geometrie.m_n <= 7.5:
                     return 1.
-                elif self.m_n < 30:
-                    return 1.08 - 0.011  * self.m_n
+                elif self.geometrie.m_n < 30:
+                    return 1.08 - 0.011  * self.geometrie.m_n
                 else:
                     return 0.75
             raise NotImplementedError
@@ -760,7 +764,7 @@ class Getriebe:
         print(f"sigma_HGdyn = {self.sigma_HGdyn}")
 
         # Glg 4.02
-        self.sigma_H0 = self.Z_H * self.Z_E * self.Z_epsilon * self.Z_beta * m.sqrt(self.F_t / self.d[Ritzel] / self.b * (self.u + 1) / self.u)
+        self.sigma_H0 = self.Z_H * self.Z_E * self.Z_epsilon * self.Z_beta * m.sqrt(self.F_t / self.geometrie.d[Ritzel] / self.geometrie.b * (self.geometrie.u + 1) / self.geometrie.u)
         print(f"sigma_H0 = {self.sigma_H0}")
 
         # Glg 4.01
@@ -787,24 +791,25 @@ class Getriebe:
 
         # Glg D.1.01
         def z_n(idx):
-            return self.z[idx] / m.cos(m.radians(self.beta_b))**2 / m.cos(m.radians(self.beta))
+            return self.geometrie.z[idx] / m.cos(m.radians(self.geometrie.beta_b))**2 / m.cos(m.radians(self.geometrie.beta))
         self.z_n = z_n(Ritzel), z_n(Rad)
         print(f"z_n = {self.z_n}")
 
         if not self.innenverzahnt:
             # Glg D.5.01
-            self.E = m.pi / 4 * self.m_n - self.h_fP * m.tan(m.radians(self.alpha_n)) + self.s_pr / m.cos(m.radians(self.alpha_n)) - (1 - m.sin(m.radians(self.alpha_n))) * self.rho_fP / m.cos(m.radians(self.alpha_n)) 
+            self.E = (m.pi / 4 * self.geometrie.m_n - self.geometrie.h_fP * m.tan(m.radians(self.geometrie.alpha_n)) + self.s_pr / m.cos(m.radians(self.geometrie.alpha_n))
+                      - (1 - m.sin(m.radians(self.geometrie.alpha_n))) * self.geometrie.rho_fP / m.cos(m.radians(self.geometrie.alpha_n))) 
             print(f"E = {self.E}")
 
             # Glg D.5.02
             def G(idx):
-                return self.rho_fP / self.m_n - self.h_fP / self.m_n + self.x[idx]
+                return self.geometrie.rho_fP / self.geometrie.m_n - self.geometrie.h_fP / self.geometrie.m_n + self.geometrie.x[idx]
             self.G = G(Ritzel), G(Rad)
             print(f"G = {self.G}")
 
             # Glg D.5.03
             def H(idx):
-                return 2 / self.z_n[idx] * (m.pi / 2 - self.E / self.m_n) - m.pi / 3
+                return 2 / self.z_n[idx] * (m.pi / 2 - self.E / self.geometrie.m_n) - m.pi / 3
             self.H = H(Ritzel), H(Rad)
             print(f"H = {self.H}")
 
@@ -819,25 +824,26 @@ class Getriebe:
 
             # Glg D.5.05
             def s_Fn(idx):
-                return self.m_n * (self.z_n[idx] * m.sin(m.pi / 3 - m.radians(self.delta[idx])) + m.sqrt(3) * (self.G[idx] / m.cos(m.radians(self.delta[idx])) - self.rho_fP / self.m_n))
+                return self.geometrie.m_n * (self.z_n[idx] * m.sin(m.pi / 3 - m.radians(self.delta[idx])) + m.sqrt(3) * (self.G[idx] / m.cos(m.radians(self.delta[idx]))
+                                                                                                                         - self.geometrie.rho_fP / self.geometrie.m_n))
             self.s_Fn = s_Fn(Ritzel), s_Fn(Rad)
             print(f"s_Fn = {self.s_Fn}")
 
             # Glg D.5.06
             def d_n(idx):
-                return self.m_n * self.z_n[idx]
+                return self.geometrie.m_n * self.z_n[idx]
             self.d_n = d_n(Ritzel), d_n(Rad)
             print(f"d_n = {self.d_n}")
 
             # Glg D.5.07
             def d_bn(idx):
-                return self.d_n[idx] * m.cos(m.radians(self.alpha_n))
+                return self.d_n[idx] * m.cos(m.radians(self.geometrie.alpha_n))
             self.d_bn = d_bn(Ritzel), d_bn(Rad)
             print(f"d_bn = {self.d_bn}")
 
             # Glg D.5.08
             def d_an(idx):
-                return self.d_n[idx] + self.d_a[idx] - self.d[idx]
+                return self.d_n[idx] + self.geometrie.d_a[idx] - self.geometrie.d[idx]
             self.d_an = d_an(Ritzel), d_an(Rad)
             print(f"d_an = {self.d_an}")
 
@@ -849,7 +855,7 @@ class Getriebe:
 
             # Glg D.5.10
             def y_a(idx):
-                return 1 / self.z_n[idx] * (m.pi / 2 + 2 * self.x[idx] * m.tan(m.radians(self.alpha_n))) + involute(self.alpha_n) - involute(self.alpha_an[idx])
+                return 1 / self.z_n[idx] * (m.pi / 2 + 2 * self.geometrie.x[idx] * m.tan(m.radians(self.geometrie.alpha_n))) + involute(self.geometrie.alpha_n) - involute(self.alpha_an[idx])
             self.y_a = y_a(Ritzel), y_a(Rad)
             print(f"y_a = {self.y_a}")
 
@@ -861,14 +867,14 @@ class Getriebe:
 
             # Glg D.5.12
             def h_Fa(idx):
-                return self.m_n * (0.5 * self.z_n[idx] * (m.cos(m.radians(self.alpha_n)) / m.cos(m.radians(self.alpha_Fan[idx])) - m.cos(m.pi / 3 - m.radians(self.delta[idx])))
-                                   + 0.5 * (self.rho_fP / self.m_n - self.G[idx] / m.cos(m.radians(self.delta[idx]))))
+                return self.geometrie.m_n * (0.5 * self.z_n[idx] * (m.cos(m.radians(self.geometrie.alpha_n)) / m.cos(m.radians(self.alpha_Fan[idx])) - m.cos(m.pi / 3 - m.radians(self.delta[idx])))
+                                   + 0.5 * (self.geometrie.rho_fP / self.geometrie.m_n - self.G[idx] / m.cos(m.radians(self.delta[idx]))))
             self.h_Fa = h_Fa(Ritzel), h_Fa(Rad)
             print(f"h_Fa = {self.h_Fa}")
 
             # Glg D.5.13
             def rho_F(idx):
-                return self.rho_fP + self.m_n * 2 * self.G[idx]**2 / m.cos(m.radians(self.delta[idx])) / (self.z_n[idx] * m.cos(m.radians(self.delta[idx]))**2 - 2 * self.G[idx])
+                return self.geometrie.rho_fP + self.geometrie.m_n * 2 * self.G[idx]**2 / m.cos(m.radians(self.delta[idx])) / (self.z_n[idx] * m.cos(m.radians(self.delta[idx]))**2 - 2 * self.G[idx])
             self.rho_F = rho_F(Ritzel), rho_F(Rad)
             print(f"rho_F = {self.rho_F}")
         else:
@@ -876,7 +882,7 @@ class Getriebe:
 
         # Glg D.3.01
         def Y_Fa(idx):
-            return (6 * self.h_Fa[idx] / self.m_n * m.cos(m.radians(self.alpha_Fan[idx]))) / ((self.s_Fn[idx] / self.m_n)**2 * m.cos(m.radians(self.alpha_n)))
+            return (6 * self.h_Fa[idx] / self.geometrie.m_n * m.cos(m.radians(self.alpha_Fan[idx]))) / ((self.s_Fn[idx] / self.geometrie.m_n)**2 * m.cos(m.radians(self.geometrie.alpha_n)))
         self.Y_Fa = Y_Fa(Ritzel), Y_Fa(Rad)
         print(f"Y_Fa = {self.Y_Fa}")
 
@@ -906,11 +912,11 @@ class Getriebe:
         print(f"Y_FS = {self.Y_FS}")
 
         # Glg 5.10
-        self.Y_beta = 1 - min(self.epsilon_beta, 1.) * min(self.beta, 30) / 120
+        self.Y_beta = 1 - min(self.geometrie.epsilon_beta, 1.) * min(self.geometrie.beta, 30) / 120
         print(f"Y_beta = {self.Y_beta}")
  
         # Tabelle 5.8
-        epsilon_alphan = self.epsilon_alpha / m.cos(m.radians(self.beta_b))**2
+        epsilon_alphan = self.geometrie.epsilon_alpha / m.cos(m.radians(self.geometrie.beta_b))**2
         def Y_S(idx):
             return self.Y_Sa[idx] * (0.6 + 0.4 * epsilon_alphan)
         self.Y_S = Y_S(Ritzel), Y_S(Rad)
@@ -956,17 +962,17 @@ class Getriebe:
             wsart = self.werkstoff[idx].art
             Art = Werkstoff.Art
             if wsart in (Art.Baustahl, Art.vergüteterStahl):
-                if self.m_n <= 5:
+                if self.geometrie.m_n <= 5:
                     return 1.
-                elif self.m_n < 30:
-                    return 1.03 - 0.006  * self.m_n
+                elif self.geometrie.m_n < 30:
+                    return 1.03 - 0.006  * self.geometrie.m_n
                 else:
                     return 0.85
             elif wsart in (Art.einsatzgehärteterStahl, Art.nitrierterStahl, Art.nitrokarburierterStahl):
-                if self.m_n <= 5:
+                if self.geometrie.m_n <= 5:
                     return 1.
-                elif self.m_n < 25:
-                    return 1.05 - 0.01  * self.m_n
+                elif self.geometrie.m_n < 25:
+                    return 1.05 - 0.01  * self.geometrie.m_n
                 else:
                     return 0.8
             raise NotImplementedError
@@ -1005,7 +1011,7 @@ class Getriebe:
 
         # Glg 5.02
         def sigma_F0(idx):
-            return self.F_t / self.b / self.m_n * self.Y_FS[idx] * self.Y_epsilon * self.Y_beta
+            return self.F_t / self.geometrie.b / self.geometrie.m_n * self.Y_FS[idx] * self.Y_epsilon * self.Y_beta
         self.sigma_F0 = sigma_F0(Ritzel), sigma_F0(Rad)
         print(f"sigma_F0 = {self.sigma_F0}")
 
@@ -1065,6 +1071,8 @@ class Getriebe:
 
 
 
+
+
 # getriebe = Getriebe(m_n = 3,
 #                     z = (17, 38),
 #                     x = (0.2, -0.2),
@@ -1092,7 +1100,7 @@ class Getriebe:
 
 
 
-getriebe = Getriebe(m_n = 4,
+geometrie = Geometrie(m_n = 4,
                     z = (19, 104),
                     x = (0.5, 0.15),
                     bezugsprofil = Normalprofil1,
@@ -1100,7 +1108,9 @@ getriebe = Getriebe(m_n = 4,
                     k = 0,
                     b_d_1_verhältnis = 0.64)
 
-getriebe.Zahnräder(P = 55,
+assert geometrie.b / geometrie.m_n <= 30 # Konstruktionsvorgaben Tabelle 4
+
+getriebe = Getriebe(geometrie = geometrie, P = 55,
             n_1 = 980,
             verzahnungsqualität = (6, 7),
             werkstoff = Werkstoff(Werkstoff.Art.einsatzgehärteterStahl, 1500, 860, 220),
@@ -1117,9 +1127,7 @@ getriebe.Zahnräder(P = 55,
 
 result = getriebe.ist_sicher(S_Hstat_min, S_Hdyn_interval, S_Fstat_min, S_Fdyn_interval)
 
-
 assert getriebe.R_z100 < 4 # Konstruktionsvorgaben Seite 7
-assert getriebe.b / getriebe.m_n <= 30 # Konstruktionsvorgaben Tabelle 4
 
 sys.exit()
 
