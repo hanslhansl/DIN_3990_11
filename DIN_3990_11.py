@@ -1066,67 +1066,68 @@ class Getriebe:
         return check_values(Rad1) & check_values(Rad2)
 
 
+if __name__ == "__main__":
 
-# getriebe = Getriebe(m_n = 3,
-#                     z = (17, 38),
-#                     x = (0.2, -0.2),
-#                     bezugsprofil = Normalprofil2,
-#                     beta = 15,
-#                     k = 0,
-#                     b = 40)
+    # getriebe = Getriebe(m_n = 3,
+    #                     z = (17, 38),
+    #                     x = (0.2, -0.2),
+    #                     bezugsprofil = Normalprofil2,
+    #                     beta = 15,
+    #                     k = 0,
+    #                     b = 40)
 
-# getriebe.Zahnräder(P = 7.3,
-#             n_1 = 1274.118,
-#             verzahnungsqualität = 6,
-#             werkstoff = Werkstoff(Werkstoff.Art.einsatzgehärteterStahl, 1300, 620, 220),
-#             K_A = 1.1,
-#             K_S = 2.1,
-#             A = 0.023,
+    # getriebe.Zahnräder(P = 7.3,
+    #             n_1 = 1274.118,
+    #             verzahnungsqualität = 6,
+    #             werkstoff = Werkstoff(Werkstoff.Art.einsatzgehärteterStahl, 1300, 620, 220),
+    #             K_A = 1.1,
+    #             K_S = 2.1,
+    #             A = 0.023,
 
-#             K_Halpha = (1, 1),
-#             K_Hbeta = (1.3, 1.3),
+    #             K_Halpha = (1, 1),
+    #             K_Hbeta = (1.3, 1.3),
             
-#             K_Fbeta = (1, 1),
-#             Z_LVRdyn = 0.85)
+    #             K_Fbeta = (1, 1),
+    #             Z_LVRdyn = 0.85)
 
-# result = getriebe.ist_sicher(S_Hstat_min, S_Hdyn_interval, S_Fstat_min, S_Fdyn_interval)
-# sys.exit()
+    # result = getriebe.ist_sicher(S_Hstat_min, S_Hdyn_interval, S_Fstat_min, S_Fdyn_interval)
+    # sys.exit()
 
-S_Hstat_min = 1.3
-S_Hdyn_interval = (1.2, 1.5)
-S_Fstat_min = 3.5
-S_Fdyn_interval = (1.5, 2)
+    S_Hstat_min = 1.3
+    S_Hdyn_interval = (1.2, 1.5)
+    S_Fstat_min = 3.5
+    S_Fdyn_interval = (1.5, 2)
 
-werkstoff = Werkstoff(Werkstoff.Art.einsatzgehärteterStahl, 1500, 860, 220)
+    werkstoff = Werkstoff(Werkstoff.Art.einsatzgehärteterStahl, 1500, 860, 220)
 
-geometrie = Geometrie(m_n = 4,
-                    z = (19, 104),
-                    x = (0.5, 0.15),
-                    bezugsprofil = Normalprofil1,
-                    beta = 0,
-                    k = 0,
-                    b_d_1_verhältnis = 0.64)
+    geometrie = Geometrie(m_n = 4,
+                        z = (19, 104),
+                        x = (0.5, 0.15),
+                        bezugsprofil = Normalprofil1,
+                        beta = 0,
+                        k = 0,
+                        b_d_1_verhältnis = 0.64)
 
 
-getriebe = Getriebe(geometrie = geometrie, P = 55,
-            n_1 = 980,
-            verzahnungsqualität = (6, 7),
-            werkstoff = (werkstoff, werkstoff),
-            K_A = 1.75,
-            K_S = 2.5,
-            R_z = (5, 5),
-            s_pr = 0,
+    getriebe = Getriebe(geometrie = geometrie, P = 55,
+                n_1 = 980,
+                verzahnungsqualität = (6, 7),
+                werkstoff = (werkstoff, werkstoff),
+                K_A = 1.75,
+                K_S = 2.5,
+                R_z = (5, 5),
+                s_pr = 0,
 
-            A = Tabelle_3_2.ohneBreitenballigkeltOderEndrücknahme,
-            f_ma = (0, 0),  # Annahme, siehe Fußnote 5
-            s = (0, 0),
-            fertigungsverfahren = (Fertigungsverfahren.geläpptGeschliffenGeschabt, Fertigungsverfahren.geläpptGeschliffenGeschabt),
+                A = Tabelle_3_2.ohneBreitenballigkeltOderEndrücknahme,
+                f_ma = (0, 0),  # Annahme, siehe Fußnote 5
+                s = (0, 0),
+                fertigungsverfahren = (Fertigungsverfahren.geläpptGeschliffenGeschabt, Fertigungsverfahren.geläpptGeschliffenGeschabt),
 
-            _assert = True,
-            S_Hstat=S_Hstat_min, S_Hdyn=S_Hdyn_interval, S_Fstat=S_Fstat_min, S_Fdyn=S_Fdyn_interval
-            )
+                _assert = True,
+                S_Hstat=S_Hstat_min, S_Hdyn=S_Hdyn_interval, S_Fstat=S_Fstat_min, S_Fdyn=S_Fdyn_interval
+                )
 
-result = getriebe.is_save(S_Hstat_min, S_Hdyn_interval, S_Fstat_min, S_Fdyn_interval)
+    result = getriebe.is_save(S_Hstat_min, S_Hdyn_interval, S_Fstat_min, S_Fdyn_interval)
 
-assert geometrie.b / geometrie.m_n <= 30 # Konstruktionsvorgaben Tabelle 4
-assert getriebe.R_z100 < 4 # Konstruktionsvorgaben Seite 7
+    assert geometrie.b / geometrie.m_n <= 30 # Konstruktionsvorgaben Tabelle 4
+    assert getriebe.R_z100 < 4 # Konstruktionsvorgaben Seite 7
