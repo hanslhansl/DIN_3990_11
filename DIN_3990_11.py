@@ -117,6 +117,12 @@ class Geometrie:
         _print(f"h_fP = {self.h_fP}")
         _print(f"rho_fP = {self.rho_fP}")
 
+        self.alpha_t = m.degrees(m.atan(m.tan(m.radians(self.alpha_n)) / m.cos(m.radians(self.beta))))
+        _print(f"alpha_t = {self.alpha_t}")
+
+        self.alpha_wt = inverse_involute( involute(self.alpha_t) + 2 * sum(self.x) / sum(self.z) * m.tan(m.radians(self.alpha_n)) )
+        _print(f"alpha_wt = {self.alpha_wt}")
+
         self.u = self.z[Rad2] / self.z[Rad1]
         _print(f"u = {self.u}")
 
@@ -124,23 +130,6 @@ class Geometrie:
             return self.z[idx] * self.m_n / m.cos(m.radians(self.beta))
         self.d = d(Rad1), d(Rad2)
         _print(f"d = {self.d}")
-
-        if ("b" in kwargs) == ("b_d_1_verhältnis" in kwargs):
-            raise ValueError("either b or b_d_1_verhältnis must be specified as argument")
-        if "b" in kwargs:
-            self.b = to_float(kwargs.pop("b"))
-        else:
-            self.b = self.d[Rad1] * to_float(kwargs.pop("b_d_1_verhältnis"))
-        _print(f"b = {self.b}")
-
-        self.m_t = m_n / m.cos(m.radians(self.beta))
-        _print(f"m_t = {self.m_t}")
-
-        self.alpha_t = m.degrees(m.atan(m.tan(m.radians(self.alpha_n)) / m.cos(m.radians(self.beta))))
-        _print(f"alpha_t = {self.alpha_t}")
-
-        self.beta_b = m.degrees(m.atan(m.tan(m.radians(self.beta)) * m.cos(m.radians(self.alpha_t))))
-        _print(f"beta_b = {self.beta_b}")
 
         def d_b(idx):
             return self.d[idx] * m.cos(m.radians(self.alpha_t))
@@ -157,16 +146,27 @@ class Geometrie:
         self.d_f = d_f(Rad1), d_f(Rad2)
         _print(f"d_f = {self.d_f}")
 
-        self.h = self.h_aP + k * m_n + self.h_fP
-        _print(f"h = {self.h}")
-
-        self.alpha_wt = inverse_involute( involute(self.alpha_t) + 2 * sum(self.x) / sum(self.z) * m.tan(m.radians(self.alpha_n)) )
-        _print(f"alpha_wt = {self.alpha_wt}")
-
         def d_w(idx):
             return self.d_b[idx] / m.cos(m.radians(self.alpha_wt))
         self.d_w = d_w(Rad1), d_w(Rad2)
-        _print(f"d_w1 = {self.d_w}")
+        _print(f"d_w = {self.d_w}")
+
+        if ("b" in kwargs) == ("b_d_1_verhältnis" in kwargs):
+            raise ValueError("either b or b_d_1_verhältnis must be specified as argument")
+        if "b" in kwargs:
+            self.b = to_float(kwargs.pop("b"))
+        else:
+            self.b = self.d[Rad1] * to_float(kwargs.pop("b_d_1_verhältnis"))
+        _print(f"b = {self.b}")
+
+        self.m_t = m_n / m.cos(m.radians(self.beta))
+        _print(f"m_t = {self.m_t}")
+
+        self.beta_b = m.degrees(m.atan(m.tan(m.radians(self.beta)) * m.cos(m.radians(self.alpha_t))))
+        _print(f"beta_b = {self.beta_b}")
+
+        self.h = self.h_aP + k * m_n + self.h_fP
+        _print(f"h = {self.h}")
 
         self.a_w = sum(self.d_w) / 2
         _print(f"a_w = {self.a_w}")
@@ -305,7 +305,7 @@ class Getriebe:
             self.b_B = self.geometrie.b / 2
             _print(f"d_B = {self.d_B}")
 
-        self.v = self.n[Rad1] / 60 * 2 * m.pi * self.geometrie.d[Rad1] / 2000
+        self.v = self.n[Rad1] * m.pi * self.geometrie.d[Rad1] / 60000
         _print(f"v = {self.v}")
 
         self.F_t = 1000 * self.P / self.v
@@ -319,10 +319,12 @@ class Getriebe:
         if not hasattr(self, "K_V"):
             # Glg 3.04
             temp1 = self.geometrie.z[Rad1] * self.v / 100 * m.sqrt(self.geometrie.u**2 / (1 + self.geometrie.u**2))
+            print(f"z_1 * v / 100 * sqrt(u^2 / (1 + u^2)) = {temp1}")
             assert temp1 < 10  
 
             # Abschnitt 3.3.1 b
-            temp2 = max(self.K_A * self.F_t / self.geometrie.b, 100)
+            temp2 = max(self.F_t * self.K_A / self.geometrie.b, 100)
+            print(f"F_t * K_A / b = {temp2}")
 
             def K_V(idx, geradverzahnt) -> float:
                 if geradverzahnt:
@@ -359,6 +361,8 @@ class Getriebe:
                         case 12:
                             K_1 = 109.1
                     K_2 = 0.0087
+                print(f"K_1 = {K_1}")
+                print(f"K_2 = {K_2}")
                 return 1 + (K_1 / temp2 + K_2) * temp1
             if self.geometrie.beta == 0:
                 self.K_V = K_V(Rad1, True), K_V(Rad2, True)
@@ -481,10 +485,11 @@ class Getriebe:
         _print(f"K_Hbeta = {self.K_Hbeta}")
         
         # Glg 3.22
-        def K_Fbeta(idx):
-            h_b = min(self.geometrie.h / self.geometrie.b, 1. / 3.)
-            return m.pow(self.K_Hbeta[idx], (1 / (1 + h_b + h_b**2)))
         if not hasattr(self, "K_Fbeta"):
+            def K_Fbeta(idx):
+                h_b = min(self.geometrie.h / self.geometrie.b, 1. / 3.)
+                return m.pow(self.K_Hbeta[idx], (1 / (1 + h_b + h_b**2)))
+
             assert(self.F_t / self.geometrie.b * self.K_A >= 100)   # Abschnitt 3.4.1
             self.K_Fbeta = K_Fbeta(Rad1), K_Fbeta(Rad2)
         _print(f"K_Fbeta = {self.K_Fbeta}")
@@ -506,7 +511,7 @@ class Getriebe:
         def K_Halpha_und_Falpha(idx : int):
             linienbelastung = self.F_t / self.geometrie.b * self.K_A
             art = self.werkstoff[idx].art
-            qualität = self.verzahnungsqualität[idx]
+            qualität = min(self.verzahnungsqualität)
             Art = Werkstoff.Art
 
             if art in (Art.einsatzgehärteterStahl, Art.nitrierterStahl, Art.nitrokarburierterStahl):
@@ -909,7 +914,9 @@ class Getriebe:
  
         # Tabelle 5.8
         epsilon_alphan = self.geometrie.epsilon_alpha / m.cos(m.radians(self.geometrie.beta_b))**2
+        _print(f"epsilon_alphan = {epsilon_alphan}")
         def Y_S(idx):
+            assert 1 <= self.s_Fn[idx] / self.h_Fa[idx] <= 1.2
             return self.Y_Sa[idx] * (0.6 + 0.4 * epsilon_alphan)
         self.Y_S = Y_S(Rad1), Y_S(Rad2)
         _print(f"Y_S = {self.Y_S}")
@@ -990,6 +997,8 @@ class Getriebe:
         Y_NTrad = Y_NT(Rad2)
         self.Y_NTstat = Y_NTritzel[0], Y_NTrad[0]
         self.Y_NTdyn = Y_NTritzel[1], Y_NTrad[1]
+        _print(f"Y_NTstat = {self.Y_NTstat}")
+        _print(f"Y_NTdyn = {self.Y_NTdyn}")
 
         # Glg 5.03
         def sigma_FGstat(idx):
